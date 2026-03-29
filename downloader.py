@@ -5,10 +5,9 @@ import traceback
 
 # Стратегии клиентов YouTube — пробуем по очереди, пока не получим видеоформаты
 YOUTUBE_CLIENT_STRATEGIES = [
+    {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']},
+    {'player_client': ['android_creator', 'android', 'web']},
     {'player_client': ['ios', 'mweb']},
-    {'player_client': ['web_creator', 'mweb']},
-    {'player_client': ['android', 'web']},
-    {'player_client': ['tv_embedded']},
     {'player_client': ['default']},
 ]
 
@@ -42,13 +41,8 @@ class VideoDownloader:
             'no_warnings': True,
             'nocheckcertificate': True,
             'ignoreerrors': False,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'remote_components': ['ejs:github'],
             'extractor_args': {'youtube': strategy},
-            'http_headers': {
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            },
             'socket_timeout': 30,
         }
         if self.ffmpeg_location:
@@ -153,6 +147,7 @@ class VideoDownloader:
         strategies_to_try = len(YOUTUBE_CLIENT_STRATEGIES) if is_yt else 1
 
         best_info = None
+        last_error_msg = None
         best_resolutions = []
 
         for attempt in range(strategies_to_try):
@@ -168,6 +163,11 @@ class VideoDownloader:
             if browser_cookies:
                 ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
 
+            # При использовании cookies мобильные клиенты могут выдавать ошибку доступа,
+            # поэтому принудительно используем более стабильные клиенты для авторизации.
+            if cookies_file or browser_cookies:
+                ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']}}
+
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(url, download=False)
@@ -178,31 +178,41 @@ class VideoDownloader:
                     # Для плейлистов — не пробуем стратегии, берём как есть
                     if info_dict.get('_type') == 'playlist' or 'entries' in info_dict:
                         self._working_strategy_idx = idx
-                        return info_dict
+                        return info_dict, None
 
                     formats = info_dict.get('formats', [])
                     resolutions = self._extract_video_resolutions(formats)
 
                     if resolutions:
                         self._working_strategy_idx = idx
-                        return info_dict
+                        return info_dict, None
 
                     if best_info is None:
                         best_info = info_dict
 
-            except Exception:
+            except Exception as e:
+                err_str = str(e)
+                last_error_msg = self._handle_error(err_str)
+                # Если ошибка тотальная (нет доступа к cookies) - прекращаем попытки
+                if 'Chrome cookie database' in err_str or 'DPAPI' in err_str:
+                    break
                 continue
 
-        return best_info
+        return best_info, last_error_msg
 
     def fetch_info(self, url, cookies_file=None, browser_cookies=None):
         """
         Извлекает информацию о видео/плейлисте по URL.
         Автоматически определяет тип (одно видео или плейлист).
         """
-        info_dict = self._try_extract_with_strategies(url, cookies_file, browser_cookies)
+        info_dict, error_msg = self._try_extract_with_strategies(url, cookies_file, browser_cookies)
 
         if info_dict is None:
+            if error_msg:
+                return {
+                    'status': 'error',
+                    'message': error_msg
+                }
             return {
                 'status': 'error',
                 'message': 'Не удалось получить информацию. Ссылка недействительна или видео удалено.'
@@ -324,6 +334,9 @@ class VideoDownloader:
 
         if browser_cookies:
             ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
+
+        if cookies_file or browser_cookies:
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']}}
 
         # Счётчик для плейлистов
         playlist_state = {'current': 0, 'total': 0}
