@@ -114,7 +114,8 @@ class App(ctk.CTk):
         self.use_browser_cookies = ctk.CTkCheckBox(browser_frame,
             text="Использовать cookies из браузера (рекомендуется для YouTube)",
             font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY,
-            checkbox_width=20, checkbox_height=20, corner_radius=4)
+            checkbox_width=20, checkbox_height=20, corner_radius=4,
+            command=self._on_browser_checkbox)
         self.use_browser_cookies.pack(side="left", padx=(0, 10))
 
         self.browser_combo = ctk.CTkComboBox(browser_frame,
@@ -215,6 +216,14 @@ class App(ctk.CTk):
 
     # ─── ACTIONS ───
 
+    def _on_browser_checkbox(self):
+        if self.use_browser_cookies.get():
+            self.cookies_entry.configure(state="disabled", text_color="gray")
+            self.cookies_btn.configure(state="disabled")
+        else:
+            self.cookies_entry.configure(state="normal", text_color=TEXT_PRIMARY)
+            self.cookies_btn.configure(state="normal")
+
     def show_supported_sites(self):
         sites_window = ctk.CTkToplevel(self)
         sites_window.title("1500+ Поддерживаемых платформ")
@@ -291,6 +300,8 @@ class App(ctk.CTk):
         f = filedialog.askopenfilename(title="Выберите cookies.txt",
                                        filetypes=(("Text", "*.txt"), ("All", "*.*")))
         if f:
+            self.use_browser_cookies.deselect()
+            self._on_browser_checkbox()
             self.cookies_entry.delete(0, 'end')
             self.cookies_entry.insert(0, f)
 
@@ -539,6 +550,7 @@ class App(ctk.CTk):
         browser = None
         if self.use_browser_cookies.get():
             browser = self.browser_combo.get()
+            cookies = ""  # Игнорируем файл, если используется браузер
 
         self.info_btn.configure(state="disabled")
         self.download_btn.configure(state="disabled")
@@ -633,6 +645,7 @@ class App(ctk.CTk):
         browser = None
         if self.use_browser_cookies.get():
             browser = self.browser_combo.get()
+            cookies = ""  # Игнорируем файл, если используется браузер
 
         if not os.path.exists(out_dir):
             try:
