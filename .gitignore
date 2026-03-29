@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Binaries (FFmpeg, Deno etc)
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Downloads
+*.mp4
+*.mkv
+*.webm
+*.mp3
+*.m4a
+
+# User Data
+cookies.txt
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+logs/
+debug_test.py
