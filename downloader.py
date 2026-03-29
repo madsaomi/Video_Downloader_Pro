@@ -16,7 +16,11 @@ YOUTUBE_CLIENT_STRATEGIES = [
 class VideoDownloader:
     def __init__(self):
         # Определяем путь к папке приложения
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            # Если приложение запущено как скомпилированный .exe от PyInstaller
+            self.app_dir = sys._MEIPASS
+        else:
+            self.app_dir = os.path.dirname(os.path.abspath(__file__))
 
         # Добавляем app_dir в PATH, чтобы yt-dlp нашёл ffmpeg.exe и deno.exe
         if self.app_dir not in os.environ.get('PATH', ''):

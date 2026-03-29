@@ -30,3 +30,8 @@ cookies.txt
 # Project specific
 logs/
 debug_test.py
+
+# PyInstaller
+dist/
+build/
+*.spec
