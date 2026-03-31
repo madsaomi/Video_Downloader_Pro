@@ -435,7 +435,8 @@ class VideoDownloader:
                 f"best[height<={res_val}]/"
                 f"bestvideo+bestaudio/best"
             )
-            ydl_opts['merge_output_format'] = 'mp4'
+            # Убрано принудительное ydl_opts['merge_output_format'] = 'mp4'
+            # чтобы избежать артефактов (боковых линий) при проигрывании VP9 в MP4.
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
