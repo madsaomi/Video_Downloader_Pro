@@ -279,9 +279,11 @@ class VideoDownloader:
 
             entry_title = entry.get('title', f'Видео {i + 1}')
             entry_thumb = entry.get('thumbnail') or entry.get('thumbnails', [{}])[-1].get('url') if entry.get('thumbnails') else None
+            entry_url = entry.get('url') or entry.get('webpage_url') or entry.get('id', '')
 
             video_list.append({
                 'index': i + 1,
+                'url': entry_url,
                 'title': entry_title,
                 'duration': self._format_duration(duration),
                 'duration_sec': duration,
