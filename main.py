@@ -666,10 +666,10 @@ class App(ctk.CTk):
             self.set_status("⬇️ Начало скачивания...")
 
         threading.Thread(target=self._download_thread,
-                         args=(url, fmt, out_dir, cookies if cookies else None, browser),
+                         args=(url, fmt, out_dir, cookies if cookies else None, browser, self.fetched_info),
                          daemon=True).start()
 
-    def _download_thread(self, url, fmt, out_dir, cookies, browser):
+    def _download_thread(self, url, fmt, out_dir, cookies, browser, fetched_info):
         def progress_cb(percent, text):
             self.after(0, self.progress_bar.set, percent)
             self.after(0, self.set_status, f"⬇️ {percent*100:.0f}%  {text}")
@@ -686,7 +686,7 @@ class App(ctk.CTk):
 
         try:
             self.downloader.download(url, fmt, out_dir, cookies, browser,
-                                     progress_cb, done_cb, err_cb, playlist_item_cb)
+                                     progress_cb, done_cb, err_cb, playlist_item_cb, fetched_info)
         except Exception as e:
             err_cb(str(e))
 

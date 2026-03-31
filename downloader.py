@@ -320,16 +320,48 @@ class VideoDownloader:
     def download(self, url, format_selection, output_path, cookies_file=None,
                  browser_cookies=None, progress_callback=None,
                  finished_callback=None, error_callback=None,
-                 playlist_item_callback=None):
+                 playlist_item_callback=None, fetched_info=None):
         """
         Запускает скачивание выбранного формата.
         playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
         """
         ydl_opts = self._base_opts(cookies_file, strategy_idx=self._working_strategy_idx)
-        ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
-        # Для плейлистов — создаём подпапку
-        ydl_opts['outtmpl'] = os.path.join(output_path, '%(playlist_title,)s', '%(title)s.%(ext)s')
-        # Если не плейлист, шаблон %(playlist_title,)s будет пустым — файлы в корне
+        
+        if fetched_info and fetched_info.get('type') == 'playlist':
+            import re
+            import requests
+            playlist_title = fetched_info.get('title', 'Playlist')
+            playlist_name_safe = re.sub(r'[\\/*?:"<>|]', "_", playlist_title).strip()
+            final_out_dir = os.path.join(output_path, playlist_name_safe)
+            
+            try:
+                os.makedirs(final_out_dir, exist_ok=True)
+                
+                info_text = f"Плейлист: {playlist_title}\n"
+                info_text += f"Автор: {fetched_info.get('uploader', 'Неизвестно')}\n"
+                info_text += f"Количество видео: {fetched_info.get('video_count', 0)}\n"
+                info_text += f"Ссылка: {url}\n"
+                
+                with open(os.path.join(final_out_dir, 'info.txt'), 'w', encoding='utf-8') as f:
+                    f.write(info_text)
+                    
+                thumb_url = fetched_info.get('thumbnail')
+                if thumb_url:
+                    try:
+                        r = requests.get(thumb_url, timeout=10)
+                        if r.status_code == 200:
+                            with open(os.path.join(final_out_dir, 'cover.jpg'), 'wb') as f:
+                                f.write(r.content)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"Ошибка сохранения метаданных плейлиста: {e}")
+                final_out_dir = output_path
+                
+            ydl_opts['outtmpl'] = os.path.join(final_out_dir, '%(title)s.%(ext)s')
+        else:
+            ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
+
         ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
 
         if browser_cookies:
