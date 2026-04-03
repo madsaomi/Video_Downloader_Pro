@@ -8,18 +8,27 @@ echo.
 
 cd /d "%~dp0"
 
-if not exist .venv\Scripts\pyinstaller.exe (
+if not exist venv\Scripts\pyinstaller.exe (
     color 0c
-    echo [ERROR] PyInstaller not found in .venv\Scripts\
+    echo [ERROR] PyInstaller not found in venv\Scripts\
     echo Please install it using "pip install pyinstaller"
     pause
     exit /b
 )
 
-echo [1/3] Running PyInstaller (This may take 1-3 minutes)...
-echo.
+set PYINSTALLER_CMD=venv\Scripts\pyinstaller.exe --noconsole --onefile --collect-all customtkinter --name "VideoDownloaderPro"
 
-.venv\Scripts\pyinstaller.exe --noconsole --onefile --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-binary "deno.exe;." --collect-all customtkinter --name "VideoDownloaderPro" main.py
+if exist ffmpeg.exe (
+    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffmpeg.exe;."
+)
+if exist ffprobe.exe (
+    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffprobe.exe;."
+)
+if exist deno.exe (
+    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "deno.exe;."
+)
+
+%PYINSTALLER_CMD% main.py
 
 echo.
 echo [2/3] Checking build results...

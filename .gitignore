@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+venv/
 .env
 
 # Binaries (FFmpeg, Deno etc)
@@ -20,6 +21,7 @@ __pycache__/
 
 # User Data
 cookies.txt
+data/
 
 # IDEs
 .vscode/
