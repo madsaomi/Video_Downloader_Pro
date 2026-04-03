@@ -6,8 +6,11 @@ import io
 import requests
 from PIL import Image
 from downloader import VideoDownloader
+from history_manager import HistoryManager
+import subprocess
+import platform
 
-ctk.set_appearance_mode("Dark")
+# ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 ACCENT_COLOR = "#7C3AED"
@@ -37,11 +40,31 @@ class App(ctk.CTk):
         self._thumb_image = None  # prevent GC
         self._playlist_window = None
 
-        # --- Scrollable main container ---
+        self.history_mgr = HistoryManager()
+        theme = self.history_mgr.get_setting("theme")
+        if theme:
+            ctk.set_appearance_mode(theme)
+
+        # --- Tabview ---
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.main_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.tabview = ctk.CTkTabview(self, fg_color=CARD_BG, segmented_button_selected_color=ACCENT_COLOR, segmented_button_selected_hover_color=ACCENT_HOVER)
+        self.tabview.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        self.tab_download = self.tabview.add("Скачать")
+        self.tab_history = self.tabview.add("История")
+        self.tab_settings = self.tabview.add("Настройки")
+
+        self.tab_download.grid_columnconfigure(0, weight=1)
+        self.tab_download.grid_rowconfigure(0, weight=1)
+        
+        self.tab_history.grid_columnconfigure(0, weight=1)
+        self.tab_history.grid_rowconfigure(0, weight=1)
+        
+        self.tab_settings.grid_columnconfigure(0, weight=1)
+        self.tab_settings.grid_rowconfigure(0, weight=1)
+
+        self.main_scroll = ctk.CTkScrollableFrame(self.tab_download, fg_color="transparent")
         self.main_scroll.grid(row=0, column=0, sticky="nsew")
         self.main_scroll.grid_columnconfigure(0, weight=1)
 
@@ -80,9 +103,12 @@ class App(ctk.CTk):
         ctk.CTkLabel(url_card, text="🔗  Ссылка на видео или плейлист", font=ctk.CTkFont(size=14, weight="bold"),
                      text_color=TEXT_PRIMARY).grid(row=0, column=0, columnspan=3, padx=16, pady=(14, 6), sticky="w")
 
-        self.url_entry = ctk.CTkEntry(url_card, placeholder_text="Вставьте ссылку...",
-                                      height=40, font=ctk.CTkFont(size=14), corner_radius=8)
+        urls = self.history_mgr.get_urls()
+        self.url_entry = ctk.CTkComboBox(url_card, height=40, font=ctk.CTkFont(size=14), corner_radius=8,
+                                         values=urls if urls else [""])
         self.url_entry.grid(row=1, column=0, columnspan=2, padx=(16, 8), pady=(0, 14), sticky="ew")
+        if not urls:
+            self.url_entry.set("")
 
         self.paste_btn = ctk.CTkButton(url_card, text="📋 Вставить", command=self.paste_url,
                                        width=110, height=40, corner_radius=8,
@@ -213,6 +239,110 @@ class App(ctk.CTk):
                                                 progress_color=ACCENT_COLOR)
         self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.progress_bar.set(0)
+
+        self.build_history_tab()
+        self.build_settings_tab()
+
+    # ─── EXTRA TABS ───
+    def build_history_tab(self):
+        for w in self.tab_history.winfo_children():
+            w.destroy()
+            
+        header = ctk.CTkFrame(self.tab_history, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(20, 10))
+        
+        ctk.CTkLabel(header, text="📜 История скачиваний", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        
+        clear_btn = ctk.CTkButton(header, text="Очистить", width=100, command=self.clear_history, fg_color="#E11D48", hover_color="#BE123C")
+        clear_btn.pack(side="right")
+        
+        self.history_scroll = ctk.CTkScrollableFrame(self.tab_history, fg_color="transparent")
+        self.history_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        self.refresh_history()
+
+    def clear_history(self):
+        if messagebox.askyesno("Очистить историю", "Удалить всю историю скачиваний?"):
+            self.history_mgr.clear_history()
+            self.refresh_history()
+
+    def refresh_history(self):
+        for w in self.history_scroll.winfo_children():
+            w.destroy()
+            
+        downloads = self.history_mgr.get_downloads()
+        if not downloads:
+            ctk.CTkLabel(self.history_scroll, text="История пуста", text_color=TEXT_SECONDARY).pack(pady=40)
+            return
+            
+        for d in downloads:
+            card = ctk.CTkFrame(self.history_scroll, fg_color=CARD_BG, corner_radius=8, border_width=1, border_color=CARD_BORDER)
+            card.pack(fill="x", pady=5, padx=10)
+            card.grid_columnconfigure(1, weight=1)
+            
+            title_lbl = ctk.CTkLabel(card, text=d.get('title', 'Unknown')[:50], font=ctk.CTkFont(size=14, weight="bold"), anchor="w")
+            title_lbl.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 2), sticky="w")
+            
+            info_text = f"📅 {d.get('date', '')}  |  Формат: {d.get('format', '')}"
+            ctk.CTkLabel(card, text=info_text, font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY).grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+            
+            btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+            btn_frame.grid(row=0, column=2, rowspan=2, padx=10, pady=10)
+            
+            open_btn = ctk.CTkButton(btn_frame, text="📁 Папка", width=80, height=28, fg_color="#374151", hover_color="#4B5563",
+                                     command=lambda path=d.get('path'): self.open_folder(path))
+            open_btn.pack(side="left", padx=5)
+            
+            dl_btn = ctk.CTkButton(btn_frame, text="🔄 Скачать", width=80, height=28, 
+                                   command=lambda url=d.get('url'): self.download_from_history(url))
+            dl_btn.pack(side="left", padx=5)
+
+    def download_from_history(self, url):
+        self.tabview.set("Скачать")
+        self.url_entry.set(url)
+        self.start_get_info()
+
+    def open_folder(self, path):
+        if not path or not os.path.exists(path):
+            messagebox.showerror("Ошибка", f"Папка не найдена:\n{path}")
+            return
+        try:
+            if platform.system() == "Windows":
+                os.startfile(path)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось открыть папку:\n{e}")
+
+    def build_settings_tab(self):
+        title = ctk.CTkLabel(self.tab_settings, text="⚙️ Настройки", font=ctk.CTkFont(size=20, weight="bold"))
+        title.pack(anchor="w", padx=30, pady=(30, 20))
+        
+        card = ctk.CTkFrame(self.tab_settings, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        card.pack(fill="x", padx=30, pady=10)
+        
+        self.meta_var = ctk.BooleanVar(value=self.history_mgr.get_setting("embed_metadata"))
+        meta_cb = ctk.CTkCheckBox(card, text="Вшивать метаданные и обложки (MP3/Видео)", variable=self.meta_var, 
+                                  command=self._save_settings, font=ctk.CTkFont(size=14))
+        meta_cb.pack(anchor="w", padx=20, pady=20)
+        
+        theme_frame = ctk.CTkFrame(card, fg_color="transparent")
+        theme_frame.pack(fill="x", padx=20, pady=(0, 20))
+        ctk.CTkLabel(theme_frame, text="Тема оформления:", font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 15))
+        
+        self.theme_combo = ctk.CTkComboBox(theme_frame, values=["Dark", "Light", "System"], command=self._change_theme)
+        theme = self.history_mgr.get_setting("theme")
+        if theme:
+            self.theme_combo.set(theme)
+        self.theme_combo.pack(side="left")
+
+    def _save_settings(self):
+        self.history_mgr.set_setting("embed_metadata", self.meta_var.get())
+        
+    def _change_theme(self, choice):
+        self.history_mgr.set_setting("theme", choice)
+        ctk.set_appearance_mode(choice)
 
     # ─── ACTIONS ───
 
@@ -545,6 +675,9 @@ class App(ctk.CTk):
         if not url.startswith(('http://', 'https://')):
             messagebox.showerror("Ошибка", "Ссылка должна начинаться с http:// или https://")
             return
+            
+        self.history_mgr.add_url(url)
+        self.url_entry.configure(values=self.history_mgr.get_urls())
 
         cookies = self.cookies_entry.get().strip()
         browser = None
@@ -685,8 +818,9 @@ class App(ctk.CTk):
             self.after(0, self.set_status, f"⬇️ [{current}/{total}] {short_title}")
 
         try:
+            embed_meta = self.history_mgr.get_setting("embed_metadata")
             self.downloader.download(url, fmt, out_dir, cookies, browser,
-                                     progress_cb, done_cb, err_cb, playlist_item_cb, fetched_info)
+                                     progress_cb, done_cb, err_cb, playlist_item_cb, fetched_info, embed_meta)
         except Exception as e:
             err_cb(str(e))
 
@@ -695,6 +829,12 @@ class App(ctk.CTk):
         self.download_btn.configure(state="normal")
         self.info_btn.configure(state="normal")
         folder = self.folder_entry.get()
+
+        title = self.fetched_info.get('title', 'Unknown') if self.fetched_info else 'Unknown'
+        url = self.url_entry.get().strip()
+        fmt = self.format_combo.get()
+        self.history_mgr.add_download(title, url, folder, fmt)
+        self.refresh_history()
 
         is_playlist = self.fetched_info and self.fetched_info.get('type') == 'playlist'
         if is_playlist:

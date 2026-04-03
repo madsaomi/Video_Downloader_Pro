@@ -322,7 +322,7 @@ class VideoDownloader:
     def download(self, url, format_selection, output_path, cookies_file=None,
                  browser_cookies=None, progress_callback=None,
                  finished_callback=None, error_callback=None,
-                 playlist_item_callback=None, fetched_info=None):
+                 playlist_item_callback=None, fetched_info=None, embed_metadata=False):
         """
         Запускает скачивание выбранного формата.
         playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
@@ -427,6 +427,12 @@ class VideoDownloader:
                 'preferredcodec': 'mp3',
                 'preferredquality': '320',
             }]
+            if embed_metadata:
+                ydl_opts['postprocessors'].extend([
+                    {'key': 'FFmpegMetadata'},
+                    {'key': 'EmbedThumbnail'},
+                ])
+                ydl_opts['writethumbnail'] = True
         else:
             res_val = format_selection.split('p')[0].strip()
             ydl_opts['format'] = (
@@ -435,6 +441,12 @@ class VideoDownloader:
                 f"best[height<={res_val}]/"
                 f"bestvideo+bestaudio/best"
             )
+            if embed_metadata:
+                ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                    {'key': 'FFmpegMetadata'},
+                    {'key': 'EmbedThumbnail'},
+                ]
+                ydl_opts['writethumbnail'] = True
             # Убрано принудительное ydl_opts['merge_output_format'] = 'mp4'
             # чтобы избежать артефактов (боковых линий) при проигрывании VP9 в MP4.
 
