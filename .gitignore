@@ -32,6 +32,11 @@ data/
 # Project specific
 logs/
 debug_test.py
+setup_ffmpeg.py
+setup_ffmpeg.ps1
+test_cb.py
+ffmpeg_temp.zip
+ffmpeg.zip
 
 # PyInstaller
 dist/

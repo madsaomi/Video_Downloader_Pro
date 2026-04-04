@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, Menu
 import threading
 import os
 import io
@@ -243,6 +243,36 @@ class App(ctk.CTk):
         self.build_history_tab()
         self.build_settings_tab()
 
+        # Bind context menu (right click) to entries
+        self._setup_context_menus()
+
+    def _setup_context_menus(self):
+        """Binds right-click context menu to all input fields."""
+        # CTkComboBox uses an internal _entry
+        if hasattr(self.url_entry, "_entry"):
+            self.url_entry._entry.bind("<Button-3>", self.show_context_menu)
+        
+        # CTkEntry also uses an internal _entry
+        if hasattr(self.cookies_entry, "_entry"):
+            self.cookies_entry._entry.bind("<Button-3>", self.show_context_menu)
+            
+        if hasattr(self.folder_entry, "_entry"):
+            self.folder_entry._entry.bind("<Button-3>", self.show_context_menu)
+            
+        if hasattr(self.browser_combo, "_entry"):
+            self.browser_combo._entry.bind("<Button-3>", self.show_context_menu)
+
+    def show_context_menu(self, event):
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label="✂️ Вырезать", command=lambda: event.widget.event_generate("<<Cut>>"))
+        menu.add_command(label="📋 Копировать", command=lambda: event.widget.event_generate("<<Copy>>"))
+        menu.add_command(label="📥 Вставить", command=lambda: event.widget.event_generate("<<Paste>>"))
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     # ─── EXTRA TABS ───
     def build_history_tab(self):
         for w in self.tab_history.winfo_children():
@@ -414,6 +444,9 @@ class App(ctk.CTk):
 
         textbox.insert("0.0", text_content)
         textbox.configure(state="disabled")
+        
+        # Bind context menu to textbox (even if disabled, for copying)
+        textbox._textbox.bind("<Button-3>", self.show_context_menu)
 
         close_btn = ctk.CTkButton(sites_window, text="Отлично!", command=sites_window.destroy, width=150)
         close_btn.pack(pady=15)
@@ -421,8 +454,7 @@ class App(ctk.CTk):
     def paste_url(self):
         try:
             text = self.clipboard_get()
-            self.url_entry.delete(0, 'end')
-            self.url_entry.insert(0, text.strip())
+            self.url_entry.set(text.strip())
         except Exception:
             pass
 
