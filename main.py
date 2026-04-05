@@ -218,17 +218,80 @@ class App(ctk.CTk):
                                         fg_color="#374151", hover_color="#4B5563")
         self.folder_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 12))
 
+        # ═══ SUBTITLES ROW (compact) ═══
+        subs_card = ctk.CTkFrame(container, corner_radius=12,
+                                 border_width=1, border_color=CARD_BORDER)
+        subs_card.grid(row=7, column=0, padx=24, pady=8, sticky="ew")
+        subs_card.grid_columnconfigure(0, weight=1)
+
+        subs_row = ctk.CTkFrame(subs_card, fg_color="transparent")
+        subs_row.grid(row=0, column=0, padx=16, pady=12, sticky="ew")
+
+        self.subs_var = ctk.BooleanVar(value=False)
+        self.auto_subs_var = ctk.BooleanVar(value=True)
+
+        self.subs_check = ctk.CTkCheckBox(
+            subs_row, text="📝  Субтитры",
+            variable=self.subs_var,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=("#1a1a1a", TEXT_PRIMARY),
+            checkbox_width=22, checkbox_height=22, corner_radius=5,
+            command=self._on_subs_toggle
+        )
+        self.subs_check.pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(subs_row, text="Язык:", font=ctk.CTkFont(size=13),
+                     text_color=("#4B5563", TEXT_SECONDARY)).pack(side="left", padx=(0, 6))
+
+        self.subs_lang_combo = ctk.CTkComboBox(
+            subs_row,
+            values=["ru", "en", "ru, en", "de", "fr", "es", "zh", "ar", "pt", "uk", "ja", "ko"],
+            width=110, height=32, corner_radius=6,
+            font=ctk.CTkFont(size=13)
+        )
+        self.subs_lang_combo.set("ru, en")
+        self.subs_lang_combo.pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(subs_row, text="Режим:", font=ctk.CTkFont(size=13),
+                     text_color=("#4B5563", TEXT_SECONDARY)).pack(side="left", padx=(0, 6))
+
+        self.subs_mode_combo = ctk.CTkComboBox(
+            subs_row,
+            values=["Вшить в видео 🎬", "Вшить (Стиль YouTube 🎬)", "Отдельный файл (.srt)", "Отдельный файл (.vtt)", "Отдельный файл (.ass)", "Отдельный файл (.json3)"],
+            width=200, height=32, corner_radius=6,
+            font=ctk.CTkFont(size=13), state="readonly"
+        )
+        self.subs_mode_combo.set("Вшить в видео 🎬")
+        self.subs_mode_combo.pack(side="left", padx=(0, 16))
+
+        self.auto_subs_check = ctk.CTkCheckBox(
+            subs_row, text="Автоперевод",
+            variable=self.auto_subs_var,
+            font=ctk.CTkFont(size=12),
+            text_color=("#4B5563", TEXT_SECONDARY),
+            checkbox_width=18, checkbox_height=18, corner_radius=4
+        )
+        self.auto_subs_check.pack(side="left", padx=(0, 8))
+
+        self.subs_avail_label = ctk.CTkLabel(
+            subs_card, text="", font=ctk.CTkFont(size=11),
+            text_color=("#4B5563", TEXT_SECONDARY)
+        )
+        self.subs_avail_label.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="w")
+
+
+
         # ═══ DOWNLOAD BUTTON ═══
         self.download_btn = ctk.CTkButton(container, text="⬇️  Скачать", command=self.start_download,
                                           height=48, corner_radius=10,
                                           font=ctk.CTkFont(size=16, weight="bold"),
                                           fg_color=SUCCESS_COLOR, hover_color=SUCCESS_HOVER)
-        self.download_btn.grid(row=7, column=0, padx=24, pady=14, sticky="ew")
+        self.download_btn.grid(row=8, column=0, padx=24, pady=14, sticky="ew")
         self.download_btn.configure(state="disabled")
 
         # ═══ PROGRESS ═══
         progress_frame = ctk.CTkFrame(container, fg_color="transparent")
-        progress_frame.grid(row=8, column=0, padx=24, pady=(4, 20), sticky="ew")
+        progress_frame.grid(row=9, column=0, padx=24, pady=(4, 20), sticky="ew")
         progress_frame.grid_columnconfigure(0, weight=1)
 
         self.status_label = ctk.CTkLabel(progress_frame, text="⏳ Ожидание...",
@@ -245,6 +308,28 @@ class App(ctk.CTk):
 
         # Bind context menu (right click) to entries
         self._setup_context_menus()
+
+    # ─── SUBTITLES HELPERS ───
+
+    def _on_subs_toggle(self):
+        """Highlight subtitle row when enabled."""
+        pass  # compact layout — always visible, nothing to show/hide
+
+    def _update_subs_avail_label(self, subtitle_langs):
+        """Updates the available subtitle languages hint label."""
+        if not subtitle_langs:
+            self.subs_avail_label.configure(text="")
+            return
+        manual = subtitle_langs.get('manual', [])
+        auto = subtitle_langs.get('auto', [])
+        parts = []
+        if manual:
+            parts.append(f"📝 {', '.join(manual[:8])}{'...' if len(manual) > 8 else ''}")
+        if auto:
+            parts.append(f"🤖 авто: {len(auto)} яз.")
+        self.subs_avail_label.configure(
+            text=("Доступно: " + "  |  ".join(parts)) if parts else "Субтитры не обнаружены"
+        )
 
     def _setup_context_menus(self):
         """Binds right-click context menu to all input fields."""
@@ -782,6 +867,10 @@ class App(ctk.CTk):
                 "Аудио можно скачать прямо сейчас!"
             )
 
+        # ── Обновляем доступные языки субтитров ──
+        subtitle_langs = info.get('subtitle_langs')
+        self._update_subs_avail_label(subtitle_langs)
+
         if thumb_url:
             self.set_status("🖼 Загрузка превью...")
             threading.Thread(target=self._load_thumb, args=(thumb_url,), daemon=True).start()
@@ -851,8 +940,41 @@ class App(ctk.CTk):
 
         try:
             embed_meta = self.history_mgr.get_setting("embed_metadata")
-            self.downloader.download(url, fmt, out_dir, cookies, browser,
-                                     progress_cb, done_cb, err_cb, playlist_item_cb, fetched_info, embed_meta)
+            # Субтитры
+            dl_subs = self.subs_var.get()
+            lang_str = self.subs_lang_combo.get().strip()
+            sub_langs = [l.strip() for l in lang_str.split(',') if l.strip()] if lang_str else ['ru', 'en']
+            
+            subs_mode = self.subs_mode_combo.get()
+            embed_subs = "Вшить" in subs_mode
+            youtube_style = "Стиль YouTube" in subs_mode
+            
+            if youtube_style:
+                sub_fmt = "ass"
+            elif embed_subs:
+                sub_fmt = "srt"  # Для вшивания srt самый надежный формат
+            elif "vtt" in subs_mode:
+                sub_fmt = "vtt"
+            elif "ass" in subs_mode:
+                sub_fmt = "ass"
+            elif "json3" in subs_mode:
+                sub_fmt = "json3"
+            else:
+                sub_fmt = "srt"
+                
+            auto_subs = self.auto_subs_var.get()
+
+            self.downloader.download(
+                url, fmt, out_dir, cookies, browser,
+                progress_cb, done_cb, err_cb, playlist_item_cb,
+                fetched_info, embed_meta,
+                download_subtitles=dl_subs,
+                subtitle_langs=sub_langs,
+                subtitle_format=sub_fmt,
+                auto_subtitles=auto_subs,
+                embed_subtitles=embed_subs,
+                youtube_style=youtube_style
+            )
         except Exception as e:
             err_cb(str(e))
 

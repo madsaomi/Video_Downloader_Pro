@@ -16,16 +16,14 @@ if not exist venv\Scripts\pyinstaller.exe (
     exit /b
 )
 
-set PYINSTALLER_CMD=venv\Scripts\pyinstaller.exe --noconsole --onefile --collect-all customtkinter --name "VideoDownloaderPro"
+echo [1/3] Running PyInstaller...
+set PYINSTALLER_CMD=venv\Scripts\pyinstaller.exe --noconsole --onefile --clean --collect-all customtkinter --name "VideoDownloaderPro"
 
 if exist ffmpeg.exe (
     set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffmpeg.exe;."
 )
 if exist ffprobe.exe (
     set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffprobe.exe;."
-)
-if exist deno.exe (
-    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "deno.exe;."
 )
 
 %PYINSTALLER_CMD% main.py
@@ -48,4 +46,9 @@ if exist dist\VideoDownloaderPro.exe (
 )
 
 echo.
+echo Cleaning up unnecessary build files...
+if exist build rmdir /s /q build
+if exist __pycache__ rmdir /s /q __pycache__
+if exist VideoDownloaderPro.spec del /q VideoDownloaderPro.spec
+
 pause

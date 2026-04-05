@@ -12,6 +12,27 @@ YOUTUBE_CLIENT_STRATEGIES = [
 ]
 
 
+class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
+    def run(self, info):
+        subs = info.get('requested_subtitles')
+        if not subs:
+            return [], info
+        for lang, sub_info in subs.items():
+            filepath = sub_info.get('filepath')
+            if filepath and filepath.endswith('.ass'):
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    import re
+                    # YouTube Default Style: Black transparent background box (BorderStyle=3), Roboto font, white text.
+                    new_style = "Style: Default,Roboto,20,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,3,0,0,2,10,10,10,1"
+                    content = re.sub(r'Style: Default,.*', new_style, content)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                except Exception as e:
+                    self.to_screen(f'[youtube style] Error modifying ASS file: {e}')
+        return [], info
+
 class VideoDownloader:
     def __init__(self):
         # Определяем путь к папке приложения
@@ -225,6 +246,24 @@ class VideoDownloader:
         # ═══ ОДНО ВИДЕО ═══
         return self._process_single_info(info_dict)
 
+    def _extract_subtitle_langs(self, info_dict):
+        """Извлекает доступные языки субтитров (ручные + авто)."""
+        manual_subs = info_dict.get('subtitles', {}) or {}
+        auto_subs = info_dict.get('automatic_captions', {}) or {}
+
+        manual_langs = set(manual_subs.keys())
+        auto_langs = set(auto_subs.keys())
+
+        # Убираем технические языки yt-dlp (live_chat и т.д.)
+        exclude = {'live_chat', 'rechat'}
+        manual_langs -= exclude
+        auto_langs -= exclude
+
+        return {
+            'manual': sorted(list(manual_langs)),
+            'auto': sorted(list(auto_langs)),
+        }
+
     def _process_single_info(self, info_dict):
         """Обрабатывает информацию одного видео."""
         title = info_dict.get('title', 'Без названия')
@@ -237,6 +276,7 @@ class VideoDownloader:
         format_options = self._resolutions_to_labels(resolutions)
 
         is_yt = self._is_youtube(info_dict.get('webpage_url', ''))
+        subtitle_langs = self._extract_subtitle_langs(info_dict)
 
         return {
             'status': 'success',
@@ -247,6 +287,7 @@ class VideoDownloader:
             'thumbnail': thumbnail_url,
             'formats': format_options,
             'no_video_warning': len(resolutions) == 0 and is_yt,
+            'subtitle_langs': subtitle_langs,
         }
 
     def _process_playlist_info(self, info_dict):
@@ -322,7 +363,9 @@ class VideoDownloader:
     def download(self, url, format_selection, output_path, cookies_file=None,
                  browser_cookies=None, progress_callback=None,
                  finished_callback=None, error_callback=None,
-                 playlist_item_callback=None, fetched_info=None, embed_metadata=False):
+                 playlist_item_callback=None, fetched_info=None, embed_metadata=False,
+                 download_subtitles=False, subtitle_langs=None, subtitle_format='srt',
+                 auto_subtitles=False, embed_subtitles=False, youtube_style=False):
         """
         Запускает скачивание выбранного формата.
         playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
@@ -450,9 +493,60 @@ class VideoDownloader:
             # Убрано принудительное ydl_opts['merge_output_format'] = 'mp4'
             # чтобы избежать артефактов (боковых линий) при проигрывании VP9 в MP4.
 
+        # ── Субтитры ──
+        if download_subtitles:
+            langs = subtitle_langs if subtitle_langs else ['ru', 'en']
+            langs = [l.strip() for l in langs if l.strip()]
+            if not langs:
+                langs = ['ru', 'en']
+
+            expanded_langs = []
+            for l in langs:
+                expanded_langs.append(l)
+                if "-" not in l:
+                    # Позволяет yt-dlp скачивать автопереведенные субтитры (формат 'оригинал-перевод', например 'ru-en')
+                    expanded_langs.append(f".*-{l}")
+
+            ydl_opts['writesubtitles'] = True
+            ydl_opts['subtitleslangs'] = expanded_langs
+            ydl_opts['subtitlesformat'] = subtitle_format or 'srt'
+
+            if auto_subtitles:
+                ydl_opts['writeautomaticsub'] = True
+
+            # Конвертируем субтитры через ffmpeg, если формат — srt или ass
+            if self.ffmpeg_location and subtitle_format in ('srt', 'ass') and not embed_subtitles:
+                ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                    {'key': 'FFmpegSubtitlesConvertor', 'format': subtitle_format}
+                ]
+            
+            # Вшиваем субтитры, если это запрошено и не аудио
+            if embed_subtitles and self.ffmpeg_location and not is_audio:
+                # To embed YouTube style, we must first convert to ASS, then apply our custom style PP, then embed.
+                if youtube_style:
+                    ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                        {'key': 'FFmpegSubtitlesConvertor', 'format': 'ass'}
+                    ]
+                    
+                    # We inject our custom postprocessor into yt-dlp by class name later
+                
+                # FFmpegEmbedSubtitle can be specified in postprocessors
+                ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                    {'key': 'FFmpegEmbedSubtitle'}
+                ]
+                
+                if youtube_style:
+                    ydl_opts['merge_output_format'] = 'mkv'
+                # При вшивании субтитров yt-dlp рекомендует конвертировать видео в mkv или mp4
+                # Мы позволяем ему самому выбрать лучший совместимый формат, кроме случая с YouTube Style (используем mkv для сохранности стилей)
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.add_post_processor(PlaylistTracker())
+                
+                if embed_subtitles and youtube_style and not is_audio:
+                    ydl.add_post_processor(YouTubeStylePP(), when='post_process')
+                    
                 ydl.download([url])
             if finished_callback:
                 finished_callback()
