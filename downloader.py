@@ -67,7 +67,7 @@ class VideoDownloader:
 
         # Проверяем наличие ffmpeg
         ffmpeg_path = os.path.join(self.app_dir, 'ffmpeg.exe')
-        self.ffmpeg_location = self.app_dir if os.path.isfile(ffmpeg_path) else None
+        self.ffmpeg_location = ffmpeg_path if os.path.isfile(ffmpeg_path) else None
 
         # Запоминаем последнюю рабочую стратегию
         self._working_strategy_idx = 0
@@ -387,7 +387,8 @@ class VideoDownloader:
                  playlist_item_callback=None, fetched_info=None, embed_metadata=False,
                  download_subtitles=False, subtitle_langs=None, subtitle_format='srt',
                  auto_subtitles=False, embed_subtitles=False, youtube_style=False,
-                 cancel_event=None, rate_limit=0):
+                 cancel_event=None, rate_limit=0, audio_format='MP3', sponsorblock=False,
+                 trim_start=None, trim_end=None):
         """
         Запускает скачивание выбранного формата.
         playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
@@ -437,10 +438,10 @@ class VideoDownloader:
                 final_out_dir = output_path
                 
             ydl_opts['outtmpl'] = os.path.join(final_out_dir, '%(title)s.%(ext)s')
+            ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
         else:
             ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
-
-        ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
+            ydl_opts['ignoreerrors'] = False
 
         if rate_limit and rate_limit > 0:
             ydl_opts['ratelimit'] = int(rate_limit * 1024 * 1024)  # МБ/с -> байт/с
@@ -519,9 +520,14 @@ class VideoDownloader:
 
         if is_audio:
             ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
-            ydl_opts['postprocessors'] = [{
+            
+            # Если выбран M4A, постпроцессор конвертации не нужен для m4a,
+            # но мы можем просто оставить m4a как preferredcodec.
+            # Однако, для лучшей совместимости мы передадим выбранный формат.
+            target_codec = audio_format.lower() if audio_format else 'mp3'
+            ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [{
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
+                'preferredcodec': target_codec,
                 'preferredquality': '320',
             }]
             if embed_metadata:
@@ -546,6 +552,37 @@ class VideoDownloader:
                 ydl_opts['writethumbnail'] = True
             # Убрано принудительное ydl_opts['merge_output_format'] = 'mp4'
             # чтобы избежать артефактов (боковых линий) при проигрывании VP9 в MP4.
+
+        # ── SponsorBlock ──
+        if sponsorblock:
+            ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                {
+                    'key': 'SponsorBlock',
+                    'categories': ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction'],
+                },
+                {
+                    'key': 'ModifyChapters',
+                    'remove_sponsor_segments': ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction'],
+                }
+            ]
+
+        # ── Обрезка (Timecode Trim) ──
+        if trim_start and trim_end:
+            try:
+                def parse_tc(tc):
+                    parts = str(tc).strip().split(':')
+                    s = 0
+                    for p in parts: s = s * 60 + float(p)
+                    return s
+                s_sec = parse_tc(trim_start)
+                e_sec = parse_tc(trim_end)
+                if e_sec > s_sec:
+                    def download_range_func(info_dict, ydl):
+                        return [{'start_time': s_sec, 'end_time': e_sec}]
+                    ydl_opts['download_ranges'] = download_range_func
+                    ydl_opts['force_keyframes_at_cuts'] = True
+            except Exception as e:
+                print(f"Ошибка парсинга таймкодов: {e}")
 
         # ── Субтитры ──
         if download_subtitles:

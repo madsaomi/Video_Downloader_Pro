@@ -38,12 +38,12 @@ if exist ffprobe.exe (
 echo.
 echo [2/3] Checking build results...
 if exist dist\VideoDownloaderPro.exe (
-    echo [3/3] Copying EXE to Desktop...
-    copy /y "dist\VideoDownloaderPro.exe" "%USERPROFILE%\Desktop\VideoDownloaderPro.exe" > nul
+    echo [3/3] Copying EXE to the project folder...
+    copy /y "dist\VideoDownloaderPro.exe" "VideoDownloaderPro.exe" > nul
     echo.
     echo ===================================================
     echo   SUCCESS!
-    echo   App compiled and copied to Desktop as
+    echo   App compiled and saved in this folder as
     echo   "VideoDownloaderPro.exe"
     echo ===================================================
 ) else (
