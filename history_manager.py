@@ -112,7 +112,9 @@ class HistoryManager:
         self.save_history()
 
     # --- Работа с настройками ---
-    def get_setting(self, key):
+    def get_setting(self, key, default=None):
+        if default is not None:
+            return self.settings.get(key, default)
         return self.settings.get(key, self._default_settings().get(key))
 
     def set_setting(self, key, value):
