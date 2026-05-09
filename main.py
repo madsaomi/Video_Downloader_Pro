@@ -78,7 +78,7 @@ class App(ctk.CTk):
         self.tab_settings.grid_columnconfigure(0, weight=1)
         self.tab_settings.grid_rowconfigure(0, weight=1)
 
-        self.main_scroll = ctk.CTkScrollableFrame(self.tab_download, fg_color="transparent")
+        self.main_scroll = ctk.CTkScrollableFrame(self.tab_download, fg_color=BG_DARK)
         self.main_scroll.grid(row=0, column=0, sticky="nsew")
         self.main_scroll.grid_columnconfigure(0, weight=1)
 
@@ -453,7 +453,7 @@ class App(ctk.CTk):
                                   fg_color="#E11D48", hover_color="#BE123C")
         clear_btn.pack(side="right")
         
-        self.history_scroll = ctk.CTkScrollableFrame(self.tab_history, fg_color="transparent")
+        self.history_scroll = ctk.CTkScrollableFrame(self.tab_history, fg_color=BG_DARK)
         self.history_scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.refresh_history()
 

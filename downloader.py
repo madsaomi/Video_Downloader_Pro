@@ -67,7 +67,7 @@ class VideoDownloader:
 
         # Проверяем наличие ffmpeg
         ffmpeg_path = os.path.join(self.app_dir, 'ffmpeg.exe')
-        self.ffmpeg_location = self.app_dir if os.path.isfile(ffmpeg_path) else None
+        self.ffmpeg_location = ffmpeg_path if os.path.isfile(ffmpeg_path) else None
 
         # Запоминаем последнюю рабочую стратегию
         self._working_strategy_idx = 0
@@ -438,10 +438,10 @@ class VideoDownloader:
                 final_out_dir = output_path
                 
             ydl_opts['outtmpl'] = os.path.join(final_out_dir, '%(title)s.%(ext)s')
+            ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
         else:
             ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
-
-        ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
+            ydl_opts['ignoreerrors'] = False
 
         if rate_limit and rate_limit > 0:
             ydl_opts['ratelimit'] = int(rate_limit * 1024 * 1024)  # МБ/с -> байт/с
@@ -555,10 +555,16 @@ class VideoDownloader:
 
         # ── SponsorBlock ──
         if sponsorblock:
-            ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [{
-                'key': 'SponsorBlock',
-                'categories': ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction'],
-            }]
+            ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [
+                {
+                    'key': 'SponsorBlock',
+                    'categories': ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction'],
+                },
+                {
+                    'key': 'ModifyChapters',
+                    'remove_sponsor_segments': ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction'],
+                }
+            ]
 
         # ── Обрезка (Timecode Trim) ──
         if trim_start and trim_end:
