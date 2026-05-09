@@ -180,7 +180,7 @@ class App(ctk.CTk):
                                         width=220, height=124, corner_radius=8,
                                         fg_color=SURFACE_DIM, text_color=TEXT_SECONDARY,
                                         font=ctk.CTkFont(size=12))
-        self.thumb_label.grid(row=0, column=0, rowspan=3, padx=14, pady=14)
+        self.thumb_label.grid(row=0, column=0, rowspan=4, padx=14, pady=14)
 
         self.video_title_label = ctk.CTkLabel(self.preview_card, text="Название: —",
                                               wraplength=380, justify="left",
@@ -194,15 +194,40 @@ class App(ctk.CTk):
 
         # Format selection row
         fmt_frame = ctk.CTkFrame(self.preview_card, fg_color="transparent")
-        fmt_frame.grid(row=2, column=1, padx=10, pady=(4, 14), sticky="sw")
+        fmt_frame.grid(row=2, column=1, padx=10, pady=(4, 4), sticky="sw")
 
         ctk.CTkLabel(fmt_frame, text="Качество:", font=ctk.CTkFont(size=13),
                      text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 8))
 
         self.format_combo = ctk.CTkComboBox(fmt_frame, values=["—"], width=220,
                                             height=32, corner_radius=8, state="readonly",
-                                            font=ctk.CTkFont(size=13))
+                                            font=ctk.CTkFont(size=13), command=self._on_format_change)
         self.format_combo.pack(side="left")
+
+        self.audio_format_combo = ctk.CTkComboBox(fmt_frame, values=["MP3", "FLAC", "WAV", "M4A"], width=90,
+                                                  height=32, corner_radius=8, state="readonly",
+                                                  font=ctk.CTkFont(size=13))
+        self.audio_format_combo.set("MP3")
+        self.audio_format_combo.pack(side="left", padx=(8, 0))
+        self.audio_format_combo.pack_forget()
+        
+        # Timecode row
+        time_frame = ctk.CTkFrame(self.preview_card, fg_color="transparent")
+        time_frame.grid(row=3, column=1, padx=10, pady=(0, 14), sticky="sw")
+        
+        self.trim_var = ctk.BooleanVar(value=False)
+        self.trim_check = ctk.CTkCheckBox(time_frame, text="⏱ Обрезка", variable=self.trim_var,
+                                          font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
+                                          checkbox_width=18, checkbox_height=18, command=self._on_trim_toggle)
+        self.trim_check.pack(side="left", padx=(0, 8))
+        
+        self.trim_start_entry = ctk.CTkEntry(time_frame, placeholder_text="00:00", width=60, height=28, state="disabled")
+        self.trim_start_entry.pack(side="left", padx=(0, 4))
+        
+        ctk.CTkLabel(time_frame, text="-", font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
+        
+        self.trim_end_entry = ctk.CTkEntry(time_frame, placeholder_text="00:00", width=60, height=28, state="disabled")
+        self.trim_end_entry.pack(side="left", padx=(4, 0))
 
         # ═══ PLAYLIST CARD (скрыта по умолчанию) ═══
         self.playlist_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12,
@@ -240,6 +265,16 @@ class App(ctk.CTk):
 
         subs_row = ctk.CTkFrame(subs_card, fg_color="transparent")
         subs_row.grid(row=0, column=0, padx=16, pady=12, sticky="ew")
+
+        self.sponsorblock_var = ctk.BooleanVar(value=True)
+        self.sponsor_check = ctk.CTkCheckBox(
+            subs_row, text="🛡 Вырезать спонсоров",
+            variable=self.sponsorblock_var,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=TEXT_PRIMARY,
+            checkbox_width=18, checkbox_height=18, corner_radius=4
+        )
+        self.sponsor_check.pack(side="left", padx=(0, 16))
 
         self.subs_var = ctk.BooleanVar(value=False)
         self.auto_subs_var = ctk.BooleanVar(value=True)
@@ -338,6 +373,22 @@ class App(ctk.CTk):
         # J: горячие клавиши
         self.bind("<Control-v>", lambda e: self.paste_url())
         self.bind("<Return>", lambda e: self.start_get_info() if self.info_btn.cget('state') == 'normal' else None)
+
+    def _on_format_change(self, choice):
+        if "аудио" in choice.lower() or "audio" in choice.lower():
+            if not self.audio_format_combo.winfo_ismapped():
+                self.audio_format_combo.pack(side="left", padx=(8, 0))
+        else:
+            if self.audio_format_combo.winfo_ismapped():
+                self.audio_format_combo.pack_forget()
+
+    def _on_trim_toggle(self):
+        if self.trim_var.get():
+            self.trim_start_entry.configure(state="normal")
+            self.trim_end_entry.configure(state="normal")
+        else:
+            self.trim_start_entry.configure(state="disabled")
+            self.trim_end_entry.configure(state="disabled")
 
     # ─── SUBTITLES HELPERS ───
 
@@ -1031,6 +1082,15 @@ class App(ctk.CTk):
                 messagebox.showerror("Ошибка", f"Не удалось создать папку:\n{e}")
                 return
 
+        audio_fmt = self.audio_format_combo.get()
+        use_sponsorblock = getattr(self, "sponsorblock_var", ctk.BooleanVar(value=False)).get()
+        
+        trim_start = None
+        trim_end = None
+        if getattr(self, "trim_var", ctk.BooleanVar(value=False)).get():
+            trim_start = self.trim_start_entry.get().strip()
+            trim_end = self.trim_end_entry.get().strip()
+
         # B: Если уже качаем, ставим в очередь
         download_task = {
             'url': url,
@@ -1038,7 +1098,11 @@ class App(ctk.CTk):
             'out_dir': out_dir,
             'cookies': cookies,
             'browser': browser,
-            'fetched_info': copy.deepcopy(self.fetched_info) if self.fetched_info else None
+            'fetched_info': copy.deepcopy(self.fetched_info) if self.fetched_info else None,
+            'audio_fmt': audio_fmt,
+            'use_sponsorblock': use_sponsorblock,
+            'trim_start': trim_start,
+            'trim_end': trim_end
         }
 
         if self._is_downloading:
@@ -1108,12 +1172,18 @@ class App(ctk.CTk):
 
         # В _download_finished нам понадобятся данные текущей задачи
         self._current_task = task
+        
+        audio_fmt = task.get('audio_fmt', 'MP3')
+        use_sponsorblock = task.get('use_sponsorblock', False)
+        trim_start = task.get('trim_start')
+        trim_end = task.get('trim_end')
 
         threading.Thread(
             target=self._download_thread,
             args=(url, fmt, out_dir, cookies if cookies else None, browser,
                   fetched_info_copy, embed_meta, dl_subs, sub_langs, sub_fmt,
-                  auto_subs, embed_subs, youtube_style, rate_limit),
+                  auto_subs, embed_subs, youtube_style, rate_limit,
+                  audio_fmt, use_sponsorblock, trim_start, trim_end),
             daemon=True
         ).start()
 
@@ -1125,7 +1195,8 @@ class App(ctk.CTk):
 
     def _download_thread(self, url, fmt, out_dir, cookies, browser, fetched_info,
                          embed_meta, dl_subs, sub_langs, sub_fmt,
-                         auto_subs, embed_subs, youtube_style, rate_limit):
+                         auto_subs, embed_subs, youtube_style, rate_limit,
+                         audio_fmt, use_sponsorblock, trim_start, trim_end):
         """Фоновый поток скачивания. Все параметры переданы из главного потока — tkinter-виджеты
         здесь не читаются (thread-safety)."""
         def progress_cb(percent, text):
@@ -1160,7 +1231,11 @@ class App(ctk.CTk):
                 embed_subtitles=embed_subs,
                 youtube_style=youtube_style,
                 cancel_event=self._cancel_event,  # A: передаём событие отмены
-                rate_limit=rate_limit
+                rate_limit=rate_limit,
+                audio_format=audio_fmt,
+                sponsorblock=use_sponsorblock,
+                trim_start=trim_start,
+                trim_end=trim_end
             )
         except Exception as e:
             err_cb(str(e))
