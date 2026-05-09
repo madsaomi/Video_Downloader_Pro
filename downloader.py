@@ -5,10 +5,9 @@ import traceback
 
 # Стратегии клиентов YouTube — пробуем по очереди, пока не получим видеоформаты
 YOUTUBE_CLIENT_STRATEGIES = [
-    {'player_client': ['ios', 'android', 'tv_embedded']},
-    {'player_client': ['android_creator', 'android', 'web']},
-    {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']},
     {'player_client': ['default']},
+    {'player_client': ['tv_embedded', 'web', 'default']},
+    {'player_client': ['ios', 'android', 'tv_embedded']},
 ]
 
 
@@ -201,10 +200,6 @@ class VideoDownloader:
 
             if browser_cookies:
                 ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
-
-            # Использование мобильных и TV клиентов помогает обойти блокировки IP
-            if cookies_file or browser_cookies:
-                ydl_opts['extractor_args'] = {'youtube': {'player_client': ['ios', 'android', 'tv_embedded']}}
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -452,9 +447,6 @@ class VideoDownloader:
 
         if browser_cookies:
             ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
-
-        if cookies_file or browser_cookies:
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['ios', 'android', 'tv_embedded']}}
 
         # Паузы между запросами для обхода блокировок IP (особенно важно для плейлистов)
         if fetched_info and fetched_info.get('type') == 'playlist':
