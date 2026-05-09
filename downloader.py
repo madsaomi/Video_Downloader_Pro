@@ -5,9 +5,9 @@ import traceback
 
 # Стратегии клиентов YouTube — пробуем по очереди, пока не получим видеоформаты
 YOUTUBE_CLIENT_STRATEGIES = [
-    {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']},
+    {'player_client': ['ios', 'android', 'tv_embedded']},
     {'player_client': ['android_creator', 'android', 'web']},
-    {'player_client': ['ios', 'mweb']},
+    {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']},
     {'player_client': ['default']},
 ]
 
@@ -26,12 +26,32 @@ class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
                     import re
                     # YouTube Default Style: Black transparent background box (BorderStyle=3), Roboto font, white text.
                     new_style = "Style: Default,Roboto,20,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,3,0,0,2,10,10,10,1"
-                    content = re.sub(r'Style: Default,.*', new_style, content)
+                    # Заменяем первый стиль (Default или любой другой) — более надёжно
+                    if re.search(r'Style: Default,', content):
+                        content = re.sub(r'Style: Default,[^\r\n]*', new_style, content, count=1)
+                    elif re.search(r'^Style: [^,]+,', content, re.MULTILINE):
+                        content = re.sub(r'^(Style: )[^,]+(,.*)$', r'\g<1>Default' + new_style.split('Default', 1)[1], content, count=1, flags=re.MULTILINE)
                     with open(filepath, 'w', encoding='utf-8') as f:
                         f.write(content)
                 except Exception as e:
                     self.to_screen(f'[youtube style] Error modifying ASS file: {e}')
         return [], info
+
+class _ErrorCountLogger:
+    """Логгер yt-dlp, считающий ошибки отдельных видео (используется при ignoreerrors=True)."""
+    def __init__(self, state):
+        self._state = state
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg):
+        self._state['errors'] = self._state.get('errors', 0) + 1
+
+
+class _CancelledException(Exception):
+    """Сентинельное исключение: пользователь нажал Отмена — это не ошибка."""
+    pass
+
 
 class VideoDownloader:
     def __init__(self):
@@ -60,9 +80,7 @@ class VideoDownloader:
         opts = {
             'quiet': True,
             'no_warnings': True,
-            'nocheckcertificate': True,
             'ignoreerrors': False,
-            'remote_components': ['ejs:github'],
             'extractor_args': {'youtube': strategy},
             'socket_timeout': 30,
         }
@@ -184,10 +202,9 @@ class VideoDownloader:
             if browser_cookies:
                 ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
 
-            # При использовании cookies мобильные клиенты могут выдавать ошибку доступа,
-            # поэтому принудительно используем более стабильные клиенты для авторизации.
+            # Использование мобильных и TV клиентов помогает обойти блокировки IP
             if cookies_file or browser_cookies:
-                ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']}}
+                ydl_opts['extractor_args'] = {'youtube': {'player_client': ['ios', 'android', 'tv_embedded']}}
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -319,7 +336,7 @@ class VideoDownloader:
             all_resolutions.update(resolutions)
 
             entry_title = entry.get('title', f'Видео {i + 1}')
-            entry_thumb = entry.get('thumbnail') or entry.get('thumbnails', [{}])[-1].get('url') if entry.get('thumbnails') else None
+            entry_thumb = entry.get('thumbnail') or (entry.get('thumbnails', [{}])[-1].get('url') if entry.get('thumbnails') else None)
             entry_url = entry.get('url') or entry.get('webpage_url') or entry.get('id', '')
 
             video_list.append({
@@ -346,6 +363,14 @@ class VideoDownloader:
 
         is_yt = self._is_youtube(info_dict.get('webpage_url', '') or '')
 
+        # Попробуем собрать субтитры из первого видео (при extract_flat их может не быть)
+        subtitle_langs = None
+        for entry in entries:
+            sl = self._extract_subtitle_langs(entry)
+            if sl and (sl.get('manual') or sl.get('auto')):
+                subtitle_langs = sl
+                break
+
         return {
             'status': 'success',
             'type': 'playlist',
@@ -358,6 +383,7 @@ class VideoDownloader:
             'thumbnail': thumbnail_url,
             'formats': format_options,
             'no_video_warning': len(sorted_resolutions) == 0 and is_yt,
+            'subtitle_langs': subtitle_langs,
         }
 
     def download(self, url, format_selection, output_path, cookies_file=None,
@@ -365,10 +391,12 @@ class VideoDownloader:
                  finished_callback=None, error_callback=None,
                  playlist_item_callback=None, fetched_info=None, embed_metadata=False,
                  download_subtitles=False, subtitle_langs=None, subtitle_format='srt',
-                 auto_subtitles=False, embed_subtitles=False, youtube_style=False):
+                 auto_subtitles=False, embed_subtitles=False, youtube_style=False,
+                 cancel_event=None, rate_limit=0):
         """
         Запускает скачивание выбранного формата.
         playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
+        cancel_event — threading.Event(), установка которого прерывает загрузку.
         """
         ydl_opts = self._base_opts(cookies_file, strategy_idx=self._working_strategy_idx)
         
@@ -393,10 +421,20 @@ class VideoDownloader:
                 thumb_url = fetched_info.get('thumbnail')
                 if thumb_url:
                     try:
-                        r = requests.get(thumb_url, timeout=10)
+                        _MAX_COVER = 5 * 1024 * 1024  # 5 МБ — достаточно для обложки
+                        r = requests.get(thumb_url, timeout=10, stream=True)
                         if r.status_code == 200:
-                            with open(os.path.join(final_out_dir, 'cover.jpg'), 'wb') as f:
-                                f.write(r.content)
+                            cl = r.headers.get('Content-Length')
+                            if not cl or int(cl) <= _MAX_COVER:
+                                chunks, total = [], 0
+                                for chunk in r.iter_content(8192):
+                                    total += len(chunk)
+                                    if total > _MAX_COVER:
+                                        break
+                                    chunks.append(chunk)
+                                else:
+                                    with open(os.path.join(final_out_dir, 'cover.jpg'), 'wb') as f:
+                                        f.write(b''.join(chunks))
                     except Exception:
                         pass
             except Exception as e:
@@ -409,14 +447,25 @@ class VideoDownloader:
 
         ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
 
+        if rate_limit and rate_limit > 0:
+            ydl_opts['ratelimit'] = int(rate_limit * 1024 * 1024)  # МБ/с -> байт/с
+
         if browser_cookies:
             ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
 
         if cookies_file or browser_cookies:
-            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['tv_embedded', 'web_creator', 'web', 'default']}}
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': ['ios', 'android', 'tv_embedded']}}
+
+        # Паузы между запросами для обхода блокировок IP (особенно важно для плейлистов)
+        if fetched_info and fetched_info.get('type') == 'playlist':
+            ydl_opts['sleep_interval_requests'] = 2
+            ydl_opts['sleep_interval_subtitles'] = 2
+            ydl_opts['sleep_interval'] = 3
+            ydl_opts['max_sleep_interval'] = 7
 
         # Счётчик для плейлистов
-        playlist_state = {'current': 0, 'total': 0}
+        playlist_state = {'current': 0, 'total': 0, 'errors': 0}
+        ydl_opts['logger'] = _ErrorCountLogger(playlist_state)
 
         if progress_callback:
             def hooks(d):
@@ -446,7 +495,20 @@ class VideoDownloader:
                         progress_callback(p, f"[{playlist_state['current']}/{playlist_state['total']}] ⏳ Обработка...")
                     else:
                         progress_callback(1.0, "⏳ Обработка...")
-            ydl_opts['progress_hooks'] = [hooks]
+            # A: cancel hook — вставляем в рамки progress hook, чтобы yt-dlp прервался при отмене
+            if cancel_event is not None:
+                def cancel_hook(d):
+                    if cancel_event.is_set():
+                        raise _CancelledException()
+                ydl_opts['progress_hooks'] = [hooks, cancel_hook]
+            else:
+                ydl_opts['progress_hooks'] = [hooks]
+        elif cancel_event is not None:
+            # progress_callback нет, но cancel всё равно нужен
+            def _only_cancel_hook(d):
+                if cancel_event.is_set():
+                    raise _CancelledException()
+            ydl_opts['progress_hooks'] = [_only_cancel_hook]
 
         # Postprocessor hook для отслеживания начала новых видео в плейлисте
         class PlaylistTracker(yt_dlp.postprocessor.PostProcessor):
@@ -543,13 +605,17 @@ class VideoDownloader:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.add_post_processor(PlaylistTracker())
-                
+
                 if embed_subtitles and youtube_style and not is_audio:
                     ydl.add_post_processor(YouTubeStylePP(), when='post_process')
-                    
+
                 ydl.download([url])
             if finished_callback:
-                finished_callback()
+                finished_callback(playlist_state.get('errors', 0))
+        except _CancelledException:
+            # A: пользователь отменил — сигнализируем UI через сентинель
+            if error_callback:
+                error_callback("__CANCELLED__")
         except Exception as e:
             msg = self._handle_error(str(e))
             if error_callback:

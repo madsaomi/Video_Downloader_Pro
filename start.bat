@@ -6,6 +6,8 @@ set "PATH=%USERPROFILE%\.deno\bin;%PATH%"
 
 if exist .venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
+) else if exist venv\Scripts\activate.bat (
+    call venv\Scripts\activate.bat
 )
 python main.py
 pause

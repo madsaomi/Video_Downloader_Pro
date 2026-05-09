@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, Menu
 import threading
+import copy
 import os
 import io
 import requests
@@ -18,13 +19,18 @@ ACCENT_HOVER = "#6D28D9"
 SUCCESS_COLOR = "#10B981"
 SUCCESS_HOVER = "#059669"
 WARNING_COLOR = "#F59E0B"
-BG_DARK = "#0F0F14"
-CARD_BG = "#1A1A24"
-CARD_BG_ALT = "#1E1E2E"
-CARD_BORDER = "#2A2A3A"
-TEXT_PRIMARY = "#F1F1F6"
-TEXT_SECONDARY = "#9CA3AF"
 PLAYLIST_BADGE = "#3B82F6"
+
+# Тема-зависимые цвета (light, dark)
+BG_DARK = ("#F0F1F5", "#0F0F14")
+CARD_BG = ("#FFFFFF", "#1A1A24")
+CARD_BG_ALT = ("#F5F5FA", "#1E1E2E")
+CARD_BORDER = ("#E2E4E9", "#2A2A3A")
+TEXT_PRIMARY = ("#111827", "#F1F1F6")
+TEXT_SECONDARY = ("#6B7280", "#9CA3AF")
+SECONDARY_BTN = ("#D1D5DB", "#374151")
+SECONDARY_BTN_HOVER = ("#B0B5BE", "#4B5563")
+SURFACE_DIM = ("#E5E7EB", "#252535")
 
 
 class App(ctk.CTk):
@@ -32,18 +38,26 @@ class App(ctk.CTk):
         super().__init__()
 
         self.title("🎬 Video Downloader Pro")
-        self.geometry("780x880")
         self.minsize(650, 700)
         self.configure(fg_color=BG_DARK)
         self.downloader = VideoDownloader()
         self.fetched_info = None
         self._thumb_image = None  # prevent GC
         self._playlist_window = None
+        self._sites_window = None
+        self._cancel_event = threading.Event()  # A: отмена скачивания
+        self._download_queue = []  # B: очередь загрузок
+        self._is_downloading = False
 
         self.history_mgr = HistoryManager()
         theme = self.history_mgr.get_setting("theme")
         if theme:
             ctk.set_appearance_mode(theme)
+
+        # I: восстанавливаем размер окна
+        saved_geo = self.history_mgr.get_setting("window_geometry")
+        self.geometry(saved_geo if saved_geo else "780x880")
+        self.bind("<Configure>", self._on_window_configure)
 
         # --- Tabview ---
         self.grid_columnconfigure(0, weight=1)
@@ -130,7 +144,7 @@ class App(ctk.CTk):
 
         self.cookies_btn = ctk.CTkButton(cookies_card, text="📂 Обзор", command=self.browse_cookies,
                                          width=100, height=36, corner_radius=8,
-                                         fg_color="#374151", hover_color="#4B5563")
+                                         fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER)
         self.cookies_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 6))
 
         # Browser cookies option
@@ -164,7 +178,7 @@ class App(ctk.CTk):
 
         self.thumb_label = ctk.CTkLabel(self.preview_card, text="  Превью  \n  появится  \n  здесь  ",
                                         width=220, height=124, corner_radius=8,
-                                        fg_color="#252535", text_color=TEXT_SECONDARY,
+                                        fg_color=SURFACE_DIM, text_color=TEXT_SECONDARY,
                                         font=ctk.CTkFont(size=12))
         self.thumb_label.grid(row=0, column=0, rowspan=3, padx=14, pady=14)
 
@@ -215,7 +229,7 @@ class App(ctk.CTk):
 
         self.folder_btn = ctk.CTkButton(folder_card, text="📂 Изменить", command=self.browse_folder,
                                         width=100, height=36, corner_radius=8,
-                                        fg_color="#374151", hover_color="#4B5563")
+                                        fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER)
         self.folder_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 12))
 
         # ═══ SUBTITLES ROW (compact) ═══
@@ -234,14 +248,14 @@ class App(ctk.CTk):
             subs_row, text="📝  Субтитры",
             variable=self.subs_var,
             font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=("#1a1a1a", TEXT_PRIMARY),
+            text_color=TEXT_PRIMARY,
             checkbox_width=22, checkbox_height=22, corner_radius=5,
             command=self._on_subs_toggle
         )
         self.subs_check.pack(side="left", padx=(0, 16))
 
         ctk.CTkLabel(subs_row, text="Язык:", font=ctk.CTkFont(size=13),
-                     text_color=("#4B5563", TEXT_SECONDARY)).pack(side="left", padx=(0, 6))
+                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 6))
 
         self.subs_lang_combo = ctk.CTkComboBox(
             subs_row,
@@ -253,7 +267,7 @@ class App(ctk.CTk):
         self.subs_lang_combo.pack(side="left", padx=(0, 16))
 
         ctk.CTkLabel(subs_row, text="Режим:", font=ctk.CTkFont(size=13),
-                     text_color=("#4B5563", TEXT_SECONDARY)).pack(side="left", padx=(0, 6))
+                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 6))
 
         self.subs_mode_combo = ctk.CTkComboBox(
             subs_row,
@@ -268,26 +282,34 @@ class App(ctk.CTk):
             subs_row, text="Автоперевод",
             variable=self.auto_subs_var,
             font=ctk.CTkFont(size=12),
-            text_color=("#4B5563", TEXT_SECONDARY),
+            text_color=TEXT_SECONDARY,
             checkbox_width=18, checkbox_height=18, corner_radius=4
         )
         self.auto_subs_check.pack(side="left", padx=(0, 8))
 
         self.subs_avail_label = ctk.CTkLabel(
             subs_card, text="", font=ctk.CTkFont(size=11),
-            text_color=("#4B5563", TEXT_SECONDARY)
+            text_color=TEXT_SECONDARY
         )
         self.subs_avail_label.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="w")
 
 
 
-        # ═══ DOWNLOAD BUTTON ═══
+        # ═══ DOWNLOAD / CANCEL BUTTONS ═══
         self.download_btn = ctk.CTkButton(container, text="⬇️  Скачать", command=self.start_download,
                                           height=48, corner_radius=10,
                                           font=ctk.CTkFont(size=16, weight="bold"),
                                           fg_color=SUCCESS_COLOR, hover_color=SUCCESS_HOVER)
         self.download_btn.grid(row=8, column=0, padx=24, pady=14, sticky="ew")
         self.download_btn.configure(state="disabled")
+
+        # A: кнопка отмены (скрыта до начала скачивания)
+        self.cancel_btn = ctk.CTkButton(container, text="⛔  Отменить загрузку", command=self.cancel_download,
+                                        height=48, corner_radius=10,
+                                        font=ctk.CTkFont(size=16, weight="bold"),
+                                        fg_color="#E11D48", hover_color="#BE123C")
+        self.cancel_btn.grid(row=8, column=0, padx=24, pady=14, sticky="ew")
+        self.cancel_btn.grid_remove()  # скрыта по умолчанию
 
         # ═══ PROGRESS ═══
         progress_frame = ctk.CTkFrame(container, fg_color="transparent")
@@ -297,6 +319,10 @@ class App(ctk.CTk):
         self.status_label = ctk.CTkLabel(progress_frame, text="⏳ Ожидание...",
                                          font=ctk.CTkFont(size=13), text_color=TEXT_SECONDARY)
         self.status_label.grid(row=0, column=0, sticky="w")
+
+        self.queue_label = ctk.CTkLabel(progress_frame, text="",
+                                        font=ctk.CTkFont(size=12, weight="bold"), text_color=PLAYLIST_BADGE)
+        self.queue_label.grid(row=0, column=1, sticky="e")
 
         self.progress_bar = ctk.CTkProgressBar(progress_frame, height=10, corner_radius=5,
                                                 progress_color=ACCENT_COLOR)
@@ -308,6 +334,10 @@ class App(ctk.CTk):
 
         # Bind context menu (right click) to entries
         self._setup_context_menus()
+
+        # J: горячие клавиши
+        self.bind("<Control-v>", lambda e: self.paste_url())
+        self.bind("<Return>", lambda e: self.start_get_info() if self.info_btn.cget('state') == 'normal' else None)
 
     # ─── SUBTITLES HELPERS ───
 
@@ -368,7 +398,8 @@ class App(ctk.CTk):
         
         ctk.CTkLabel(header, text="📜 История скачиваний", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
         
-        clear_btn = ctk.CTkButton(header, text="Очистить", width=100, command=self.clear_history, fg_color="#E11D48", hover_color="#BE123C")
+        clear_btn = ctk.CTkButton(header, text="Очистить", width=100, command=self.clear_history,
+                                  fg_color="#E11D48", hover_color="#BE123C")
         clear_btn.pack(side="right")
         
         self.history_scroll = ctk.CTkScrollableFrame(self.tab_history, fg_color="transparent")
@@ -403,7 +434,8 @@ class App(ctk.CTk):
             btn_frame = ctk.CTkFrame(card, fg_color="transparent")
             btn_frame.grid(row=0, column=2, rowspan=2, padx=10, pady=10)
             
-            open_btn = ctk.CTkButton(btn_frame, text="📁 Папка", width=80, height=28, fg_color="#374151", hover_color="#4B5563",
+            open_btn = ctk.CTkButton(btn_frame, text="📁 Папка", width=80, height=28,
+                                     fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER,
                                      command=lambda path=d.get('path'): self.open_folder(path))
             open_btn.pack(side="left", padx=5)
             
@@ -417,7 +449,7 @@ class App(ctk.CTk):
         self.start_get_info()
 
     def open_folder(self, path):
-        if not path or not os.path.exists(path):
+        if not path or not os.path.isdir(path):
             messagebox.showerror("Ошибка", f"Папка не найдена:\n{path}")
             return
         try:
@@ -452,12 +484,63 @@ class App(ctk.CTk):
             self.theme_combo.set(theme)
         self.theme_combo.pack(side="left")
 
+        # C: предпочтительное качество
+        qual_frame = ctk.CTkFrame(card, fg_color="transparent")
+        qual_frame.pack(fill="x", padx=20, pady=(0, 20))
+        ctk.CTkLabel(qual_frame, text="Предпочтительное качество:",
+                     font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 15))
+        qual_values = ["— (не задано)", "2160p", "1440p", "1080p", "720p", "480p", "360p", "Только аудио"]
+        self.quality_pref_combo = ctk.CTkComboBox(qual_frame, values=qual_values,
+                                                   width=160, state="readonly",
+                                                   command=self._save_quality_pref)
+        saved_q = self.history_mgr.get_setting("preferred_quality") or "— (не задано)"
+        self.quality_pref_combo.set(saved_q)
+        self.quality_pref_combo.pack(side="left")
+
+        # D: Лимит скорости
+        limit_frame = ctk.CTkFrame(card, fg_color="transparent")
+        limit_frame.pack(fill="x", padx=20, pady=(0, 20))
+        ctk.CTkLabel(limit_frame, text="Лимит скорости (МБ/с):",
+                     font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 15))
+        self.rate_limit_var = ctk.StringVar(value=str(self.history_mgr.get_setting("rate_limit") or 0))
+        rate_entry = ctk.CTkEntry(limit_frame, textvariable=self.rate_limit_var, width=80)
+        rate_entry.pack(side="left")
+        rate_entry.bind("<KeyRelease>", lambda e: self._save_rate_limit())
+        ctk.CTkLabel(limit_frame, text=" (0 = безлимит)", font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY).pack(side="left", padx=5)
+
+        # G: Системные уведомления
+        self.notif_var = ctk.BooleanVar(value=self.history_mgr.get_setting("notifications_enabled", True))
+        notif_cb = ctk.CTkCheckBox(card, text="Системные уведомления по завершении (Windows)", variable=self.notif_var, 
+                                   command=self._save_notif_settings, font=ctk.CTkFont(size=14))
+        notif_cb.pack(anchor="w", padx=20, pady=(0, 20))
+
+    def _save_rate_limit(self):
+        try:
+            val = float(self.rate_limit_var.get())
+            self.history_mgr.set_setting("rate_limit", val)
+        except ValueError:
+            pass
+
+    def _save_notif_settings(self):
+        self.history_mgr.set_setting("notifications_enabled", self.notif_var.get())
+
     def _save_settings(self):
         self.history_mgr.set_setting("embed_metadata", self.meta_var.get())
+
+    def _save_quality_pref(self, choice):
+        self.history_mgr.set_setting("preferred_quality", choice)
         
     def _change_theme(self, choice):
         self.history_mgr.set_setting("theme", choice)
         ctk.set_appearance_mode(choice)
+
+    # I: сохраняем геометрию окна при изменении размера
+    def _on_window_configure(self, event):
+        if event.widget is self:
+            geo = self.geometry()
+            # Сохраняем только если окно не свёрнуто
+            if self.state() == 'normal':
+                self.history_mgr.set_setting("window_geometry", geo)
 
     # ─── ACTIONS ───
 
@@ -470,7 +553,12 @@ class App(ctk.CTk):
             self.cookies_btn.configure(state="normal")
 
     def show_supported_sites(self):
+        if self._sites_window and self._sites_window.winfo_exists():
+            self._sites_window.focus()
+            return
+
         sites_window = ctk.CTkToplevel(self)
+        self._sites_window = sites_window
         sites_window.title("1500+ Поддерживаемых платформ")
         sites_window.geometry("500x650")
         sites_window.resizable(False, False)
@@ -562,10 +650,24 @@ class App(ctk.CTk):
         self.status_label.configure(text=text)
 
     def load_image_from_url(self, url):
+        MAX_SIZE = 10 * 1024 * 1024  # 10 МБ лимит
         try:
-            r = requests.get(url, timeout=8)
+            r = requests.get(url, timeout=8, stream=True)
             r.raise_for_status()
-            img = Image.open(io.BytesIO(r.content))
+            # Проверяем Content-Length если есть
+            cl = r.headers.get('Content-Length')
+            if cl and int(cl) > MAX_SIZE:
+                return None
+            # Скачиваем с лимитом
+            chunks = []
+            total = 0
+            for chunk in r.iter_content(8192):
+                total += len(chunk)
+                if total > MAX_SIZE:
+                    return None
+                chunks.append(chunk)
+            data = b''.join(chunks)
+            img = Image.open(io.BytesIO(data))
             w, h = img.size
             new_w = 220
             new_h = int(new_w / (w / h))
@@ -619,7 +721,7 @@ class App(ctk.CTk):
         # ── Кнопка "Показать все видео" ──
         show_btn = ctk.CTkButton(header_frame, text=f"📃 Показать все {count} видео",
                                  font=ctk.CTkFont(size=12),
-                                 fg_color="#374151", hover_color="#4B5563",
+                                 fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER,
                                  width=180, height=28, corner_radius=6,
                                  command=lambda: self._show_playlist_window(info))
         show_btn.grid(row=0, column=2, padx=(10, 0), sticky="e")
@@ -671,7 +773,7 @@ class App(ctk.CTk):
             more_label.bind("<Button-1>", lambda e: self._show_playlist_window(info))
 
         # ── Нижняя полоса со сводкой ══
-        summary_frame = ctk.CTkFrame(self.playlist_card, fg_color="#252535", corner_radius=8)
+        summary_frame = ctk.CTkFrame(self.playlist_card, fg_color=SURFACE_DIM, corner_radius=8)
         summary_frame.grid(row=2, column=0, padx=12, pady=(6, 12), sticky="ew")
         summary_frame.grid_columnconfigure(0, weight=1)
         summary_frame.grid_columnconfigure(1, weight=1)
@@ -851,7 +953,20 @@ class App(ctk.CTk):
 
         if formats:
             self.format_combo.configure(values=formats)
-            self.format_combo.set(formats[0])
+            # C: пробуем выбрать предпочтительное качество
+            pref = self.history_mgr.get_setting("preferred_quality") or ""
+            selected = formats[0]  # по умолчанию — лучшее доступное
+            if pref and pref != "— (не задано)":
+                if "аудио" in pref.lower():
+                    audio_fmt = next((f for f in formats if "аудио" in f.lower()), None)
+                    if audio_fmt:
+                        selected = audio_fmt
+                else:
+                    res_key = pref.replace("p", "").strip()  # "1080p" → "1080"
+                    match = next((f for f in formats if f.startswith(res_key + "p")), None)
+                    if match:
+                        selected = match
+            self.format_combo.set(selected)
             self.download_btn.configure(state="normal")
 
         # Предупреждение о блокировке видеоформатов YouTube
@@ -901,6 +1016,14 @@ class App(ctk.CTk):
             browser = self.browser_combo.get()
             cookies = ""  # Игнорируем файл, если используется браузер
 
+        # Fix #9: проверяем, что формат валидный (не заглушка «—»)
+        if not fmt or fmt == "—":
+            messagebox.showerror(
+                "Формат не выбран",
+                "Сначала нажмите «Получить информацию» и дождитесь загрузки данных о видео."
+            )
+            return
+
         if not os.path.exists(out_dir):
             try:
                 os.makedirs(out_dir)
@@ -908,62 +1031,124 @@ class App(ctk.CTk):
                 messagebox.showerror("Ошибка", f"Не удалось создать папку:\n{e}")
                 return
 
-        self.download_btn.configure(state="disabled")
+        # B: Если уже качаем, ставим в очередь
+        download_task = {
+            'url': url,
+            'fmt': fmt,
+            'out_dir': out_dir,
+            'cookies': cookies,
+            'browser': browser,
+            'fetched_info': copy.deepcopy(self.fetched_info) if self.fetched_info else None
+        }
+
+        if self._is_downloading:
+            self._download_queue.append(download_task)
+            self._update_queue_label()
+            self.set_status(f"⏳ Добавлено в очередь! (Позиция: {len(self._download_queue)})")
+            title = download_task['fetched_info'].get('title', 'Unknown') if download_task['fetched_info'] else 'Unknown'
+            # Ненадолго показываем тултип или просто обновляем статус
+            return
+
+        self._start_next_download(download_task)
+
+    def _update_queue_label(self):
+        q_len = len(self._download_queue)
+        if q_len > 0:
+            self.queue_label.configure(text=f"В очереди: {q_len}")
+        else:
+            self.queue_label.configure(text="")
+
+    def _start_next_download(self, task):
+        self._is_downloading = True
+        self._update_queue_label()
+
+        url = task['url']
+        fmt = task['fmt']
+        out_dir = task['out_dir']
+        cookies = task['cookies']
+        browser = task['browser']
+        fetched_info_copy = task['fetched_info']
+
+        # A: готовим событие отмены, переключаем кнопки
+        self._cancel_event.clear()
+        self.download_btn.grid_remove()
+        self.cancel_btn.grid()
         self.info_btn.configure(state="disabled")
         self.progress_bar.set(0)
 
-        is_playlist = self.fetched_info and self.fetched_info.get('type') == 'playlist'
+        is_playlist = fetched_info_copy and fetched_info_copy.get('type') == 'playlist'
         if is_playlist:
-            count = self.fetched_info.get('video_count', 0)
+            count = fetched_info_copy.get('video_count', 0)
             self.set_status(f"⬇️ Начало скачивания плейлиста ({count} видео)...")
         else:
             self.set_status("⬇️ Начало скачивания...")
 
-        threading.Thread(target=self._download_thread,
-                         args=(url, fmt, out_dir, cookies if cookies else None, browser, self.fetched_info),
-                         daemon=True).start()
+        # Читаем все tkinter-переменные здесь, в главном потоке (thread-safe)
+        embed_meta = self.history_mgr.get_setting("embed_metadata")
+        rate_limit = self.history_mgr.get_setting("rate_limit") or 0
+        dl_subs = self.subs_var.get()
+        lang_str = self.subs_lang_combo.get().strip()
+        sub_langs = [l.strip() for l in lang_str.split(',') if l.strip()] if lang_str else ['ru', 'en']
+        subs_mode = self.subs_mode_combo.get()
+        embed_subs = "Вшить" in subs_mode
+        youtube_style = "Стиль YouTube" in subs_mode
+        auto_subs = self.auto_subs_var.get()
+        if youtube_style:
+            sub_fmt = "ass"
+        elif embed_subs:
+            sub_fmt = "srt"
+        elif "vtt" in subs_mode:
+            sub_fmt = "vtt"
+        elif "ass" in subs_mode:
+            sub_fmt = "ass"
+        elif "json3" in subs_mode:
+            sub_fmt = "json3"
+        else:
+            sub_fmt = "srt"
 
-    def _download_thread(self, url, fmt, out_dir, cookies, browser, fetched_info):
+        # В _download_finished нам понадобятся данные текущей задачи
+        self._current_task = task
+
+        threading.Thread(
+            target=self._download_thread,
+            args=(url, fmt, out_dir, cookies if cookies else None, browser,
+                  fetched_info_copy, embed_meta, dl_subs, sub_langs, sub_fmt,
+                  auto_subs, embed_subs, youtube_style, rate_limit),
+            daemon=True
+        ).start()
+
+    # A: отмена скачивания
+    def cancel_download(self):
+        self._cancel_event.set()
+        self.cancel_btn.configure(state="disabled", text="⏳ Отмена...")
+        self.set_status("⏳ Отмена загрузки...")
+
+    def _download_thread(self, url, fmt, out_dir, cookies, browser, fetched_info,
+                         embed_meta, dl_subs, sub_langs, sub_fmt,
+                         auto_subs, embed_subs, youtube_style, rate_limit):
+        """Фоновый поток скачивания. Все параметры переданы из главного потока — tkinter-виджеты
+        здесь не читаются (thread-safety)."""
         def progress_cb(percent, text):
             self.after(0, self.progress_bar.set, percent)
             self.after(0, self.set_status, f"⬇️ {percent*100:.0f}%  {text}")
+            # H: прогресс в заголовке
+            self.after(0, self.title, f"🎬 Video Downloader Pro — {percent*100:.0f}%")
 
-        def done_cb():
-            self.after(0, self._download_finished)
+        def done_cb(errors=0):
+            self.after(0, self._download_finished, errors)
 
         def err_cb(msg):
-            self.after(0, self._download_error, msg)
+            # A: отличаем отмену от настоящей ошибки
+            if msg == "__CANCELLED__":
+                self.after(0, self._download_cancelled)
+            else:
+                self.after(0, self._download_error, msg)
 
         def playlist_item_cb(current, total, title):
             short_title = title[:40] + "..." if len(title) > 40 else title
             self.after(0, self.set_status, f"⬇️ [{current}/{total}] {short_title}")
 
         try:
-            embed_meta = self.history_mgr.get_setting("embed_metadata")
-            # Субтитры
-            dl_subs = self.subs_var.get()
-            lang_str = self.subs_lang_combo.get().strip()
-            sub_langs = [l.strip() for l in lang_str.split(',') if l.strip()] if lang_str else ['ru', 'en']
-            
-            subs_mode = self.subs_mode_combo.get()
-            embed_subs = "Вшить" in subs_mode
-            youtube_style = "Стиль YouTube" in subs_mode
-            
-            if youtube_style:
-                sub_fmt = "ass"
-            elif embed_subs:
-                sub_fmt = "srt"  # Для вшивания srt самый надежный формат
-            elif "vtt" in subs_mode:
-                sub_fmt = "vtt"
-            elif "ass" in subs_mode:
-                sub_fmt = "ass"
-            elif "json3" in subs_mode:
-                sub_fmt = "json3"
-            else:
-                sub_fmt = "srt"
-                
-            auto_subs = self.auto_subs_var.get()
-
             self.downloader.download(
                 url, fmt, out_dir, cookies, browser,
                 progress_cb, done_cb, err_cb, playlist_item_cb,
@@ -973,36 +1158,96 @@ class App(ctk.CTk):
                 subtitle_format=sub_fmt,
                 auto_subtitles=auto_subs,
                 embed_subtitles=embed_subs,
-                youtube_style=youtube_style
+                youtube_style=youtube_style,
+                cancel_event=self._cancel_event,  # A: передаём событие отмены
+                rate_limit=rate_limit
             )
         except Exception as e:
             err_cb(str(e))
 
-    def _download_finished(self):
-        self.progress_bar.set(1.0)
+    def _restore_download_btn(self):
+        """Восстанавливает кнопку Скачать и прячет кнопку Отмена."""
+        self.cancel_btn.grid_remove()
+        self.cancel_btn.configure(state="normal", text="⛔  Отменить загрузку")
+        self.download_btn.grid()
         self.download_btn.configure(state="normal")
         self.info_btn.configure(state="normal")
-        folder = self.folder_entry.get()
+        # H: убираем прогресс из заголовка
+        self.title("🎬 Video Downloader Pro")
 
-        title = self.fetched_info.get('title', 'Unknown') if self.fetched_info else 'Unknown'
-        url = self.url_entry.get().strip()
-        fmt = self.format_combo.get()
+    def _download_finished(self, errors=0):
+        self.progress_bar.set(1.0)
+        task = getattr(self, '_current_task', None)
+        folder = task['out_dir'] if task else self.folder_entry.get()
+        fetched_info = task['fetched_info'] if task else self.fetched_info
+        
+        title = fetched_info.get('title', 'Unknown') if fetched_info else 'Unknown'
+        url = task['url'] if task else self.url_entry.get().strip()
+        fmt = task['fmt'] if task else self.format_combo.get()
+        
         self.history_mgr.add_download(title, url, folder, fmt)
         self.refresh_history()
 
-        is_playlist = self.fetched_info and self.fetched_info.get('type') == 'playlist'
+        is_playlist = fetched_info and fetched_info.get('type') == 'playlist'
+
+        # G: Системное уведомление
+        notif_enabled = self.history_mgr.get_setting("notifications_enabled", True)
+        def send_toast(msg_title, msg_body):
+            if notif_enabled:
+                try:
+                    import win11toast
+                    win11toast.toast(msg_title, msg_body, app_id="Video Downloader Pro")
+                except Exception:
+                    pass
+
         if is_playlist:
-            count = self.fetched_info.get('video_count', 0)
-            self.set_status(f"✅ Плейлист ({count} видео) скачан!")
-            messagebox.showinfo("Готово! 🎉", f"Плейлист ({count} видео) успешно скачан в:\n{folder}")
+            count = fetched_info.get('video_count', 0)
+            if errors > 0:
+                self.set_status(f"⚠️ Плейлист скачан с ошибками ({errors} видео пропущено)!")
+                send_toast("⚠️ Загрузка с ошибками", f"Плейлист скачан, {errors} видео пропущено.")
+                if not self._download_queue:
+                    messagebox.showwarning(
+                        "Загрузка завершена с ошибками ⚠️",
+                        f"Плейлист скачан, но {errors} из {count} видео не удалось загрузить.\n\n"
+                        f"Остальные видео сохранены в:\n{folder}"
+                    )
+            else:
+                self.set_status(f"✅ Плейлист ({count} видео) скачан!")
+                send_toast("✅ Плейлист загружен", f"{title} успешно скачан.")
+                # Спрашиваем открыть папку, только если очередь пуста
+                if not self._download_queue and messagebox.askyesno("Готово! 🎉",
+                                       f"Плейлист ({count} видео) успешно скачан!\n\n"
+                                       f"Папка: {folder}\n\nОткрыть папку?"):
+                    self.open_folder(folder)
         else:
             self.set_status("✅ Скачивание завершено!")
-            messagebox.showinfo("Готово! 🎉", f"Файл успешно сохранён в:\n{folder}")
+            send_toast("✅ Видео загружено", f"{title} успешно скачано.")
+            if not self._download_queue and messagebox.askyesno("Готово! 🎉",
+                                   f"Файл успешно сохранён!\n\nПапка: {folder}\n\nОткрыть папку?"):
+                self.open_folder(folder)
+
+        self._check_next_in_queue()
+
+    def _check_next_in_queue(self):
+        if self._download_queue:
+            next_task = self._download_queue.pop(0)
+            self.after(500, self._start_next_download, next_task)
+        else:
+            self._is_downloading = False
+            self._restore_download_btn()
+
+    def _download_cancelled(self):
+        """A: вызывается когда пользователь нажал Отмена и поток завершился."""
+        self._download_queue.clear()
+        self._update_queue_label()
+        self._is_downloading = False
+        self.progress_bar.set(0)
+        self._restore_download_btn()
+        self.set_status("⛔ Загрузка отменена.")
 
     def _download_error(self, err_msg):
         self.set_status("❌ Ошибка!")
-        self.download_btn.configure(state="normal")
-        self.info_btn.configure(state="normal")
+        self._check_next_in_queue()
         messagebox.showerror("Ошибка загрузки", err_msg)
 
 

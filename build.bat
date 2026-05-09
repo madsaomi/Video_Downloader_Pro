@@ -8,16 +8,23 @@ echo.
 
 cd /d "%~dp0"
 
-if not exist venv\Scripts\pyinstaller.exe (
+set "VENV_PATH="
+if exist venv\Scripts\pyinstaller.exe (
+    set "VENV_PATH=venv"
+) else if exist .venv\Scripts\pyinstaller.exe (
+    set "VENV_PATH=.venv"
+)
+
+if not defined VENV_PATH (
     color 0c
-    echo [ERROR] PyInstaller not found in venv\Scripts\
+    echo [ERROR] PyInstaller not found in venv\Scripts\ or .venv\Scripts\
     echo Please install it using "pip install pyinstaller"
     pause
     exit /b
 )
 
 echo [1/3] Running PyInstaller...
-set PYINSTALLER_CMD=venv\Scripts\pyinstaller.exe --noconsole --onefile --clean --collect-all customtkinter --name "VideoDownloaderPro"
+set PYINSTALLER_CMD=%VENV_PATH%\Scripts\pyinstaller.exe --noconsole --onefile --clean --collect-all customtkinter --name "VideoDownloaderPro"
 
 if exist ffmpeg.exe (
     set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffmpeg.exe;."
@@ -48,6 +55,7 @@ if exist dist\VideoDownloaderPro.exe (
 echo.
 echo Cleaning up unnecessary build files...
 if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
 if exist __pycache__ rmdir /s /q __pycache__
 if exist VideoDownloaderPro.spec del /q VideoDownloaderPro.spec
 

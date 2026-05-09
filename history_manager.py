@@ -4,13 +4,29 @@ from datetime import datetime
 
 class HistoryManager:
     def __init__(self):
-        # Определение пути для данных
-        if not os.path.exists('data'):
-            os.makedirs('data')
-        
-        self.history_file = os.path.join('data', 'history.json')
-        self.settings_file = os.path.join('data', 'settings.json')
-        
+        # Определение пути для данных — используем APPDATA для надёжности
+        app_data = os.path.join(
+            os.environ.get('APPDATA', os.path.expanduser('~')),
+            'VideoDownloaderPro'
+        )
+        os.makedirs(app_data, exist_ok=True)
+
+        self.history_file = os.path.join(app_data, 'history.json')
+        self.settings_file = os.path.join(app_data, 'settings.json')
+
+        # Миграция: если данные есть в старой папке data/ — переносим
+        old_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+        if os.path.isdir(old_data):
+            import shutil
+            for fname in ('history.json', 'settings.json'):
+                old_file = os.path.join(old_data, fname)
+                new_file = os.path.join(app_data, fname)
+                if os.path.isfile(old_file) and not os.path.isfile(new_file):
+                    try:
+                        shutil.copy2(old_file, new_file)
+                    except Exception:
+                        pass
+
         self.load_data()
 
     def load_data(self):
@@ -42,7 +58,9 @@ class HistoryManager:
         return {
             "embed_metadata": True,
             "theme": "Dark",
-            "default_quality": "—"
+            "preferred_quality": "— (не задано)",
+            "rate_limit": 0,
+            "notifications_enabled": True
         }
 
     def save_history(self):
