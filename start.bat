@@ -3,30 +3,25 @@ chcp 65001 > nul
 cd /d "%~dp0"
 
 echo ===================================================
-echo   🎬 Video Downloader Pro — Запуск
+echo   Video Downloader Pro - Start
 echo ===================================================
 
-REM Добавляем Deno в PATH (нужен для yt-dlp + YouTube)
+REM Add Deno and local FFmpeg to PATH
 set "PATH=%USERPROFILE%\.deno\bin;%PATH%"
-
-REM Добавляем локальный FFmpeg/Deno если лежат рядом
 if exist "%~dp0ffmpeg.exe" set "PATH=%~dp0;%PATH%"
 if exist "%~dp0deno.exe" set "PATH=%~dp0;%PATH%"
 
-REM Активируем виртуальное окружение
+REM Activate venv
 if exist .venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 ) else if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
-) else (
-    echo [!] Виртуальное окружение не найдено, запускаю с системным Python...
 )
 
 python main.py
 
 if %errorlevel% neq 0 (
     echo.
-    echo [ERROR] Приложение завершилось с ошибкой.
-    echo Убедитесь, что установлены зависимости: pip install -r requirements.txt
+    echo [ERROR] Application crashed.
     pause
 )

@@ -1,132 +1,110 @@
 @echo off
+REM Use UTF-8 for display
 chcp 65001 > nul
 color 0a
 
 echo ===================================================
-echo   🎬 Building Portable Video Downloader Pro
+echo   Building Portable Video Downloader Pro
 echo ===================================================
 echo.
 
 cd /d "%~dp0"
 
-REM ─── Активация venv ───
+REM --- Activate venv ---
 if exist .venv\Scripts\activate.bat (
     call .venv\Scripts\activate.bat
 ) else if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
 ) else (
     color 0c
-    echo [ERROR] Виртуальное окружение не найдено!
-    echo Создайте: python -m venv .venv
+    echo [ERROR] Virtual environment not found!
+    echo Please create it: python -m venv .venv
     pause
     exit /b
 )
 
-REM ─── Проверка PyInstaller ───
+REM --- Check PyInstaller ---
 where pyinstaller >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [!] PyInstaller не найден. Устанавливаю...
+    echo [!] PyInstaller not found. Installing...
     pip install pyinstaller
 )
 
-REM ─── Шаг 1: Скачиваем FFmpeg если нет ───
+REM --- Step 1: Download FFmpeg ---
 echo.
-echo [1/5] Проверка FFmpeg...
+echo [1/5] Checking FFmpeg...
 if exist ffmpeg.exe (
-    echo    [✓] ffmpeg.exe найден
+    echo    [OK] ffmpeg.exe found
 ) else (
-    echo    [↓] Скачиваю FFmpeg...
+    echo    [..] Downloading FFmpeg...
     python download_ffmpeg.py
     if exist ffmpeg.exe (
-        echo    [✓] FFmpeg успешно скачан
+        echo    [OK] FFmpeg downloaded successfully
     ) else (
         color 0e
-        echo    [!] Не удалось скачать FFmpeg. Видео 1080p+ может быть без звука.
-        echo    Скачайте вручную: https://ffmpeg.org/download.html
+        echo    [WARN] Failed to download FFmpeg.
         color 0a
     )
 )
 
-REM ─── Шаг 2: Проверяем Deno ───
+REM --- Step 2: Check Deno ---
 echo.
-echo [2/5] Проверка Deno...
+echo [2/5] Checking Deno...
 if exist deno.exe (
-    echo    [✓] deno.exe найден
+    echo    [OK] deno.exe found
 ) else (
-    echo    [↓] Скачиваю Deno...
-    powershell -Command "try { Invoke-WebRequest -Uri 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip' -OutFile 'deno.zip' -UseBasicParsing; Expand-Archive -Path 'deno.zip' -DestinationPath '.' -Force; Remove-Item 'deno.zip' -Force; Write-Host '   [✓] Deno скачан' } catch { Write-Host '   [!] Не удалось скачать Deno' }"
+    echo    [..] Downloading Deno...
+    powershell -Command "$ErrorActionPreference = 'SilentlyContinue'; try { Invoke-WebRequest -Uri 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip' -OutFile 'deno.zip'; Expand-Archive -Path 'deno.zip' -DestinationPath '.' -Force; Remove-Item 'deno.zip' -Force; echo '   [OK] Deno downloaded' } catch { echo '   [WARN] Deno download failed' }"
     if not exist deno.exe (
         color 0e
-        echo    [!] Deno не найден. YouTube может не работать без него.
-        echo    Установите: winget install DenoLand.Deno
+        echo    [WARN] Deno not found.
         color 0a
     )
 )
 
-REM ─── Шаг 3: Сборка ───
+REM --- Step 3: Build ---
 echo.
-echo [3/5] Сборка PyInstaller...
+echo [3/5] Running PyInstaller...
 echo.
 
-set PYINSTALLER_CMD=pyinstaller --noconsole --onefile --clean ^
-    --collect-all customtkinter ^
-    --hidden-import=yt_dlp ^
-    --hidden-import=requests ^
-    --hidden-import=PIL ^
-    --add-data "downloader.py;." ^
-    --add-data "history_manager.py;." ^
-    --add-data "download_ffmpeg.py;." ^
-    --name "VideoDownloaderPro"
+set "OPTS=--noconsole --onefile --clean"
+set "OPTS=%OPTS% --collect-all customtkinter"
+set "OPTS=%OPTS% --hidden-import=yt_dlp"
+set "OPTS=%OPTS% --hidden-import=requests"
+set "OPTS=%OPTS% --hidden-import=PIL"
+set "OPTS=%OPTS% --add-data downloader.py;."
+set "OPTS=%OPTS% --add-data history_manager.py;."
+set "OPTS=%OPTS% --add-data download_ffmpeg.py;."
+set "OPTS=%OPTS% --name VideoDownloaderPro"
 
-if exist ffmpeg.exe (
-    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffmpeg.exe;."
-)
-if exist ffprobe.exe (
-    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "ffprobe.exe;."
-)
-if exist deno.exe (
-    set PYINSTALLER_CMD=%PYINSTALLER_CMD% --add-binary "deno.exe;."
-)
+if exist ffmpeg.exe set "OPTS=%OPTS% --add-binary ffmpeg.exe;."
+if exist ffprobe.exe set "OPTS=%OPTS% --add-binary ffprobe.exe;."
+if exist deno.exe set "OPTS=%OPTS% --add-binary deno.exe;."
 
-%PYINSTALLER_CMD% main.py
+pyinstaller %OPTS% main.py
 
-REM ─── Шаг 4: Проверка ───
+REM --- Step 4: Verify ---
 echo.
-echo [4/5] Проверка результатов...
+echo [4/5] Verifying results...
 
 if exist dist\VideoDownloaderPro.exe (
     copy /y "dist\VideoDownloaderPro.exe" "VideoDownloaderPro.exe" > nul
     echo.
     echo ===================================================
-    echo   ✅ СБОРКА ЗАВЕРШЕНА!
+    echo   SUCCESS!
     echo.
-    echo   Файл: VideoDownloaderPro.exe
-    for %%A in (VideoDownloaderPro.exe) do echo   Размер: %%~zA байт
-    echo.
-    if exist ffmpeg.exe (
-        echo   [✓] FFmpeg — встроен
-    ) else (
-        echo   [✗] FFmpeg — НЕ встроен
-    )
-    if exist deno.exe (
-        echo   [✓] Deno   — встроен
-    ) else (
-        echo   [✗] Deno   — НЕ встроен
-    )
-    echo.
-    echo   Этот .exe можно запустить на любом ПК
-    echo   без установки Python и зависимостей!
+    echo   File: VideoDownloaderPro.exe
+    echo   Ready to use on any PC!
     echo ===================================================
 ) else (
     color 0c
     echo.
-    echo [ERROR] Сборка не удалась!
-    echo Проверьте ошибки выше.
+    echo [ERROR] Build failed!
 )
 
-REM ─── Шаг 5: Очистка ───
+REM --- Step 5: Cleanup ---
 echo.
-echo [5/5] Очистка временных файлов...
+echo [5/5] Cleaning up...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist __pycache__ rmdir /s /q __pycache__
