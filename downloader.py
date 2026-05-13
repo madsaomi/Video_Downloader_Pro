@@ -638,7 +638,10 @@ class VideoDownloader:
                 if embed_subtitles and youtube_style and not is_audio:
                     ydl.add_post_processor(YouTubeStylePP(), when='post_process')
 
-                ydl.download([url])
+                if isinstance(url, list):
+                    ydl.download(url)
+                else:
+                    ydl.download([url])
             if finished_callback:
                 finished_callback(playlist_state.get('errors', 0))
         except _CancelledException:

@@ -1,17 +1,39 @@
 @echo off
 chcp 65001 > nul
-echo ====================================================
-echo    Обновление yt-dlp до последней версии...
-echo ====================================================
+color 0b
 
-call .venv\Scripts\activate.bat 2>nul
-if %errorlevel% neq 0 (
-    echo [!] Виртуальное окружение не найдено, пытаюсь обновить глобально...
-    python -m pip install -U yt-dlp
+echo ===================================================
+echo   🔄 Обновление yt-dlp до последней версии
+echo ===================================================
+echo.
+
+cd /d "%~dp0"
+
+REM Активируем виртуальное окружение
+if exist .venv\Scripts\activate.bat (
+    call .venv\Scripts\activate.bat
+    echo [✓] Виртуальное окружение активировано
+) else if exist venv\Scripts\activate.bat (
+    call venv\Scripts\activate.bat
+    echo [✓] Виртуальное окружение активировано
 ) else (
-    pip install -U yt-dlp
+    echo [!] Виртуальное окружение не найдено, обновляю глобально...
 )
 
 echo.
-echo Обновление завершено!
+echo Текущая версия:
+python -m yt_dlp --version 2>nul || echo    Не установлен
+
+echo.
+echo Обновление...
+pip install -U yt-dlp
+
+echo.
+echo Новая версия:
+python -m yt_dlp --version
+
+echo.
+echo ===================================================
+echo   ✅ Обновление завершено!
+echo ===================================================
 pause
