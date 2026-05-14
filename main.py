@@ -14,39 +14,85 @@ import platform
 # ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-ACCENT_COLOR = "#7C3AED"
-ACCENT_HOVER = "#6D28D9"
+ACCENT_COLOR = "#6366F1"
+ACCENT_HOVER = "#4F46E5"
 SUCCESS_COLOR = "#10B981"
 SUCCESS_HOVER = "#059669"
 WARNING_COLOR = "#F59E0B"
 PLAYLIST_BADGE = "#3B82F6"
 
 # Тема-зависимые цвета (light, dark)
-BG_DARK = ("#F0F1F5", "#0F0F14")
-CARD_BG = ("#FFFFFF", "#1A1A24")
-CARD_BG_ALT = ("#F5F5FA", "#1E1E2E")
-CARD_BORDER = ("#E2E4E9", "#2A2A3A")
-TEXT_PRIMARY = ("#111827", "#F1F1F6")
-TEXT_SECONDARY = ("#6B7280", "#9CA3AF")
-SECONDARY_BTN = ("#D1D5DB", "#374151")
-SECONDARY_BTN_HOVER = ("#B0B5BE", "#4B5563")
-SURFACE_DIM = ("#E5E7EB", "#252535")
+BG_DARK = ("#F2F4F7", "#09090B")
+CARD_BG = ("#FFFFFF", "#121217")
+CARD_BG_ALT = ("#F9FAFB", "#1A1A21")
+CARD_BORDER = ("#E4E7EC", "#1A1A21")
+TEXT_PRIMARY = ("#101828", "#F9FAFB")
+TEXT_SECONDARY = ("#667085", "#A1A1AA")
+SECONDARY_BTN = ("#E4E7EC", "#272730")
+SECONDARY_BTN_HOVER = ("#D1D5DB", "#3F3F46")
+SURFACE_DIM = ("#F2F4F7", "#1E1E26")
 
+class ToastNotification(ctk.CTkFrame):
+    def __init__(self, master, message, type="info", duration=3000, **kwargs):
+        super().__init__(master, corner_radius=12, **kwargs)
+        
+        colors = {
+            "info": ("#E4E7EC", "#1E1E26"),
+            "success": ("#D1FADF", "#064E3B"),
+            "error": ("#FEE4E2", "#7A271A"),
+            "warning": ("#FEF0C7", "#7A4300")
+        }
+        text_colors = {
+            "info": ("#101828", "#F9FAFB"),
+            "success": ("#039855", "#34D399"),
+            "error": ("#D92D20", "#F87171"),
+            "warning": ("#DC6803", "#FBBF24")
+        }
+        bg_color = colors.get(type, colors["info"])
+        text_color = text_colors.get(type, text_colors["info"])
+        
+        self.configure(fg_color=bg_color)
+        
+        self.label = ctk.CTkLabel(self, text=message, font=ctk.CTkFont(size=14, weight="bold"), text_color=text_color)
+        self.label.pack(padx=20, pady=12)
+        
+        self.duration = duration
+        self.y_pos = -0.1
+        
+        self.place(relx=0.5, rely=self.y_pos, anchor="n")
+        self.lift()
+        self._show_anim()
+
+    def _show_anim(self):
+        self.y_pos += 0.01
+        if self.y_pos <= 0.05:
+            self.place(relx=0.5, rely=self.y_pos, anchor="n")
+            self.after(16, self._show_anim)
+        else:
+            self.after(self.duration, self._hide_anim)
+            
+    def _hide_anim(self):
+        self.y_pos -= 0.01
+        if self.y_pos >= -0.1:
+            self.place(relx=0.5, rely=self.y_pos, anchor="n")
+            self.after(16, self._hide_anim)
+        else:
+            self.destroy()
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("🎬 Video Downloader Pro")
-        self.minsize(650, 700)
+        self.minsize(800, 750)
         self.configure(fg_color=BG_DARK)
         self.downloader = VideoDownloader()
         self.fetched_info = None
-        self._thumb_image = None  # prevent GC
+        self._thumb_image = None
         self._playlist_window = None
         self._sites_window = None
-        self._cancel_event = threading.Event()  # A: отмена скачивания
-        self._download_queue = []  # B: очередь загрузок
+        self._cancel_event = threading.Event()
+        self._download_queue = []
         self._is_downloading = False
 
         self.history_mgr = HistoryManager()
@@ -54,325 +100,322 @@ class App(ctk.CTk):
         if theme:
             ctk.set_appearance_mode(theme)
 
-        # I: восстанавливаем размер окна
         saved_geo = self.history_mgr.get_setting("window_geometry")
-        self.geometry(saved_geo if saved_geo else "780x880")
+        self.geometry(saved_geo if saved_geo else "850x880")
         self.bind("<Configure>", self._on_window_configure)
 
-        # --- Tabview ---
-        self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
 
-        self.tabview = ctk.CTkTabview(self, fg_color=CARD_BG, segmented_button_selected_color=ACCENT_COLOR, segmented_button_selected_hover_color=ACCENT_HOVER)
-        self.tabview.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
-        self.tab_download = self.tabview.add("Скачать")
-        self.tab_history = self.tabview.add("История")
-        self.tab_settings = self.tabview.add("Настройки")
+        # ═══ SIDEBAR ═══
+        self.sidebar_frame = ctk.CTkFrame(self, fg_color=CARD_BG, width=200, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        self.sidebar_frame.grid_propagate(False)
+        self.sidebar_frame.grid_rowconfigure(4, weight=1)
 
-        self.tab_download.grid_columnconfigure(0, weight=1)
-        self.tab_download.grid_rowconfigure(0, weight=1)
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Video\nDownloader Pro", font=ctk.CTkFont(size=20, weight="bold"), text_color=TEXT_PRIMARY)
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(60, 30))
+
+        self.hamburger_btn = ctk.CTkButton(self, text="☰", width=40, height=40, corner_radius=8, fg_color=CARD_BG, hover_color=SECONDARY_BTN, font=ctk.CTkFont(size=20), command=self.toggle_sidebar)
+        self.hamburger_btn.place(x=10, y=10)
+        self.sidebar_expanded = True
+
+        self.nav_btn_download = ctk.CTkButton(self.sidebar_frame, text="Скачать", font=ctk.CTkFont(size=15), fg_color="transparent", text_color=TEXT_PRIMARY, hover_color=SECONDARY_BTN, anchor="w", command=lambda: self.select_frame_by_name("download"))
+        self.nav_btn_download.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+
+        self.nav_btn_history = ctk.CTkButton(self.sidebar_frame, text="История", font=ctk.CTkFont(size=15), fg_color="transparent", text_color=TEXT_PRIMARY, hover_color=SECONDARY_BTN, anchor="w", command=lambda: self.select_frame_by_name("history"))
+        self.nav_btn_history.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+
+        self.nav_btn_settings = ctk.CTkButton(self.sidebar_frame, text="Настройки", font=ctk.CTkFont(size=15), fg_color="transparent", text_color=TEXT_PRIMARY, hover_color=SECONDARY_BTN, anchor="w", command=lambda: self.select_frame_by_name("settings"))
+        self.nav_btn_settings.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+
+        # ═══ FRAMES ═══
+        self.download_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.download_frame.grid_columnconfigure(0, weight=1)
         
-        self.tab_history.grid_columnconfigure(0, weight=1)
-        self.tab_history.grid_rowconfigure(0, weight=1)
+        self.history_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.history_frame.grid_columnconfigure(0, weight=1)
         
-        self.tab_settings.grid_columnconfigure(0, weight=1)
-        self.tab_settings.grid_rowconfigure(0, weight=1)
+        self.settings_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.settings_frame.grid_columnconfigure(0, weight=1)
 
-        self.main_scroll = ctk.CTkScrollableFrame(self.tab_download, fg_color=BG_DARK)
-        self.main_scroll.grid(row=0, column=0, sticky="nsew")
-        self.main_scroll.grid_columnconfigure(0, weight=1)
+        container = self.download_frame
 
-        container = self.main_scroll
-
-        # ═══ HEADER ═══
-        header = ctk.CTkFrame(container, fg_color="transparent")
-        header.grid(row=0, column=0, padx=24, pady=(24, 8), sticky="ew")
-        header.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            header, text="🎬  Video Downloader Pro",
-            font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_PRIMARY
-        ).grid(row=0, column=0, sticky="w")
-
-        subtitle_frame = ctk.CTkFrame(header, fg_color="transparent")
-        subtitle_frame.grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        ctk.CTkLabel(
-            subtitle_frame, text="YouTube • TikTok • Instagram • VK и еще",
-            font=ctk.CTkFont(size=13), text_color=TEXT_SECONDARY
-        ).pack(side="left")
-
-        sites_btn = ctk.CTkButton(
-            subtitle_frame, text="1000+ сайтов", font=ctk.CTkFont(size=13, underline=True),
-            text_color=ACCENT_COLOR, fg_color="transparent", hover_color=BG_DARK,
-            width=0, height=0, command=self.show_supported_sites
-        )
-        sites_btn.pack(side="left", padx=(5, 0))
-
-        # ═══ URL CARD ═══
-        url_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=CARD_BORDER)
-        url_card.grid(row=1, column=0, padx=24, pady=8, sticky="ew")
-        url_card.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(url_card, text="🔗  Ссылка на видео или плейлист", font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=TEXT_PRIMARY).grid(row=0, column=0, columnspan=3, padx=16, pady=(14, 6), sticky="w")
+        # MAIN SEARCH
+        # Batch Mode Switch
+        self.batch_mode_var = ctk.BooleanVar(value=False)
+        self.batch_mode_switch = ctk.CTkSwitch(container, text="📦 Пакетная загрузка", variable=self.batch_mode_var, command=self._toggle_batch_mode, font=ctk.CTkFont(size=14))
+        self.batch_mode_switch.grid(row=0, column=0, padx=70, pady=(20, 0), sticky="w")
+        
+        search_card = ctk.CTkFrame(container, fg_color="transparent")
+        search_card.grid(row=1, column=0, padx=40, pady=(40, 10), sticky="ew")
+        search_card.grid_columnconfigure(0, weight=1)
 
         urls = self.history_mgr.get_urls()
-        self.url_entry = ctk.CTkComboBox(url_card, height=40, font=ctk.CTkFont(size=14), corner_radius=8,
-                                         values=urls if urls else [""])
-        self.url_entry.grid(row=1, column=0, columnspan=2, padx=(16, 8), pady=(0, 14), sticky="ew")
+        self.url_entry = ctk.CTkComboBox(search_card, height=56, font=ctk.CTkFont(size=16), corner_radius=12,
+                                         values=urls if urls else [""], border_width=1, border_color=CARD_BORDER,
+                                         button_color=CARD_BG, button_hover_color=SECONDARY_BTN, 
+                                         dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY)
+        self.url_entry.grid(row=0, column=0, sticky="ew")
+        
+        self.batch_entry = ctk.CTkTextbox(search_card, height=120, font=ctk.CTkFont(size=14), corner_radius=12, fg_color=CARD_BG, border_width=1, border_color=CARD_BORDER)
+        self.batch_entry.grid(row=0, column=0, sticky="ew")
+        self.batch_entry.grid_remove()
         if not urls:
             self.url_entry.set("")
 
-        self.paste_btn = ctk.CTkButton(url_card, text="📋 Вставить", command=self.paste_url,
-                                       width=110, height=40, corner_radius=8,
-                                       fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER)
-        self.paste_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 14))
+        self.paste_btn = ctk.CTkButton(search_card, text="Вставить", command=self.paste_url,
+                                       width=100, height=56, corner_radius=12,
+                                       fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER, 
+                                       text_color=TEXT_PRIMARY, font=ctk.CTkFont(weight="bold"))
+        self.paste_btn.grid(row=0, column=1, padx=(10, 10))
 
-        # ═══ COOKIES CARD ═══
-        cookies_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=CARD_BORDER)
-        cookies_card.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
-        cookies_card.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(cookies_card, text="🍪  Cookies (опционально — для 18+ и закрытых видео)",
-                     font=ctk.CTkFont(size=13), text_color=TEXT_SECONDARY
-                     ).grid(row=0, column=0, columnspan=3, padx=16, pady=(12, 6), sticky="w")
-
-        self.cookies_entry = ctk.CTkEntry(cookies_card, placeholder_text="Путь к файлу cookies.txt",
-                                          height=36, corner_radius=8)
-        self.cookies_entry.grid(row=1, column=0, columnspan=2, padx=(16, 8), pady=(0, 12), sticky="ew")
-
-        self.cookies_btn = ctk.CTkButton(cookies_card, text="📂 Обзор", command=self.browse_cookies,
-                                         width=100, height=36, corner_radius=8,
-                                         fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER)
-        self.cookies_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 6))
-
-        # Browser cookies option
-        browser_frame = ctk.CTkFrame(cookies_card, fg_color="transparent")
-        browser_frame.grid(row=2, column=0, columnspan=3, padx=16, pady=(0, 12), sticky="w")
-
-        self.use_browser_cookies = ctk.CTkCheckBox(browser_frame,
-            text="Использовать cookies из браузера (рекомендуется для YouTube)",
-            font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY,
-            checkbox_width=20, checkbox_height=20, corner_radius=4,
-            command=self._on_browser_checkbox)
-        self.use_browser_cookies.pack(side="left", padx=(0, 10))
-
-        self.browser_combo = ctk.CTkComboBox(browser_frame,
-            values=["chrome", "edge", "firefox", "opera", "brave"],
-            width=110, height=28, corner_radius=6, font=ctk.CTkFont(size=12))
-        self.browser_combo.set("chrome")
-        self.browser_combo.pack(side="left")
-
-        # ═══ GET INFO BUTTON ═══
-        self.info_btn = ctk.CTkButton(container, text="🔍  Получить информацию", command=self.start_get_info,
-                                      height=44, corner_radius=10, font=ctk.CTkFont(size=15, weight="bold"),
+        self.info_btn = ctk.CTkButton(search_card, text="Поиск", command=self.start_get_info,
+                                      width=100, height=56, corner_radius=12, font=ctk.CTkFont(size=15, weight="bold"),
                                       fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER)
-        self.info_btn.grid(row=3, column=0, padx=24, pady=12, sticky="ew")
+        self.info_btn.grid(row=0, column=2)
 
-        # ═══ PREVIEW CARD (для одного видео) ═══
-        self.preview_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12,
-                                         border_width=1, border_color=CARD_BORDER)
-        self.preview_card.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
+        # PREVIEW CARD
+        self.preview_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=16, border_width=0)
+        self.preview_card.grid(row=2, column=0, padx=40, pady=10, sticky="ew")
         self.preview_card.grid_columnconfigure(1, weight=1)
 
-        self.thumb_label = ctk.CTkLabel(self.preview_card, text="  Превью  \n  появится  \n  здесь  ",
-                                        width=220, height=124, corner_radius=8,
+        self.thumb_label = ctk.CTkLabel(self.preview_card, text="Превью видео",
+                                        width=200, height=112, corner_radius=12,
                                         fg_color=SURFACE_DIM, text_color=TEXT_SECONDARY,
                                         font=ctk.CTkFont(size=12))
-        self.thumb_label.grid(row=0, column=0, rowspan=4, padx=14, pady=14)
+        self.thumb_label.grid(row=0, column=0, rowspan=2, padx=16, pady=16)
 
-        self.video_title_label = ctk.CTkLabel(self.preview_card, text="Название: —",
-                                              wraplength=380, justify="left",
-                                              font=ctk.CTkFont(size=14, weight="bold"),
+        self.video_title_label = ctk.CTkLabel(self.preview_card, text="Введите ссылку выше",
+                                              wraplength=450, justify="left",
+                                              font=ctk.CTkFont(size=16, weight="bold"),
                                               text_color=TEXT_PRIMARY)
-        self.video_title_label.grid(row=0, column=1, padx=10, pady=(14, 4), sticky="nw")
+        self.video_title_label.grid(row=0, column=1, padx=10, pady=(20, 0), sticky="nw")
 
         self.duration_label = ctk.CTkLabel(self.preview_card, text="",
-                                           font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY)
-        self.duration_label.grid(row=1, column=1, padx=10, pady=0, sticky="nw")
+                                           font=ctk.CTkFont(size=14), text_color=TEXT_SECONDARY)
+        self.duration_label.grid(row=1, column=1, padx=10, pady=(4, 20), sticky="nw")
 
-        # Format selection row
-        fmt_frame = ctk.CTkFrame(self.preview_card, fg_color="transparent")
-        fmt_frame.grid(row=2, column=1, padx=10, pady=(4, 4), sticky="sw")
+        # FORMAT SELECTION
+        format_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=16, border_width=0)
+        format_card.grid(row=3, column=0, padx=40, pady=10, sticky="ew")
+        format_card.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(fmt_frame, text="Качество:", font=ctk.CTkFont(size=13),
-                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(format_card, text="Качество", font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=TEXT_PRIMARY).grid(row=0, column=0, padx=20, pady=16, sticky="w")
 
-        self.format_combo = ctk.CTkComboBox(fmt_frame, values=["—"], width=220,
-                                            height=32, corner_radius=8, state="readonly",
-                                            font=ctk.CTkFont(size=13), command=self._on_format_change)
+        fmt_frame = ctk.CTkFrame(format_card, fg_color="transparent")
+        fmt_frame.grid(row=0, column=1, padx=16, pady=16, sticky="e")
+
+        self.format_combo = ctk.CTkComboBox(fmt_frame, values=["—"], width=180,
+                                            height=36, corner_radius=8, state="readonly",
+                                            font=ctk.CTkFont(size=14), command=self._on_format_change,
+                                            fg_color=SURFACE_DIM, border_width=0, button_color=SURFACE_DIM, 
+                                            dropdown_fg_color=CARD_BG)
         self.format_combo.pack(side="left")
 
         self.audio_format_combo = ctk.CTkComboBox(fmt_frame, values=["MP3", "FLAC", "WAV", "M4A"], width=90,
-                                                  height=32, corner_radius=8, state="readonly",
-                                                  font=ctk.CTkFont(size=13))
+                                                  height=36, corner_radius=8, state="readonly",
+                                                  font=ctk.CTkFont(size=14), fg_color=SURFACE_DIM, border_width=0, button_color=SURFACE_DIM)
         self.audio_format_combo.set("MP3")
-        self.audio_format_combo.pack(side="left", padx=(8, 0))
+        self.audio_format_combo.pack(side="left", padx=(10, 0))
         self.audio_format_combo.pack_forget()
+
+        # ADVANCED TOGGLE
+        self.advanced_visible = False
+        self.adv_btn = ctk.CTkButton(container, text="Расширенные настройки ▼", command=self.toggle_advanced,
+                                     fg_color="transparent", text_color=TEXT_SECONDARY, hover_color=BG_DARK,
+                                     font=ctk.CTkFont(size=14, underline=False))
+        self.adv_btn.grid(row=4, column=0, pady=(10, 5))
+
+        # ADVANCED FRAME
+        self.adv_frame = ctk.CTkFrame(container, fg_color="transparent")
+        self.adv_frame.grid(row=5, column=0, padx=40, sticky="ew")
+        self.adv_frame.grid_columnconfigure(0, weight=1)
+        self.adv_frame.grid_remove()
+
+        cookies_card = ctk.CTkFrame(self.adv_frame, fg_color=CARD_BG, corner_radius=12)
+        cookies_card.grid(row=0, column=0, pady=5, sticky="ew")
+        cookies_card.grid_columnconfigure(1, weight=1)
         
-        # Timecode row
-        time_frame = ctk.CTkFrame(self.preview_card, fg_color="transparent")
-        time_frame.grid(row=3, column=1, padx=10, pady=(0, 14), sticky="sw")
+        self.use_browser_cookies = ctk.CTkCheckBox(cookies_card, text="Cookies из браузера:", font=ctk.CTkFont(size=14),
+                                                   command=self._on_browser_checkbox)
+        self.use_browser_cookies.grid(row=0, column=0, padx=16, pady=12, sticky="w")
+        self.browser_combo = ctk.CTkComboBox(cookies_card, values=["chrome", "edge", "firefox", "opera", "brave"],
+                                             width=110, height=28, corner_radius=6, fg_color=SURFACE_DIM, border_width=0, button_color=SURFACE_DIM)
+        self.browser_combo.set("chrome")
+        self.browser_combo.grid(row=0, column=1, padx=(0, 16), pady=12, sticky="w")
+
+        ctk.CTkLabel(cookies_card, text="Или файл cookies.txt:", font=ctk.CTkFont(size=14)).grid(row=1, column=0, padx=16, pady=(0, 12), sticky="w")
+        self.cookies_entry = ctk.CTkEntry(cookies_card, height=32, corner_radius=8, fg_color=SURFACE_DIM, border_width=0)
+        self.cookies_entry.grid(row=1, column=1, padx=(0, 8), pady=(0, 12), sticky="ew")
+        self.cookies_btn = ctk.CTkButton(cookies_card, text="Обзор", command=self.browse_cookies, width=70, height=32, corner_radius=8, fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER, text_color=TEXT_PRIMARY)
+        self.cookies_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 12))
+
+        folder_card = ctk.CTkFrame(self.adv_frame, fg_color=CARD_BG, corner_radius=12)
+        folder_card.grid(row=1, column=0, pady=5, sticky="ew")
+        folder_card.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(folder_card, text="Папка сохранения:", font=ctk.CTkFont(size=14)).grid(row=0, column=0, padx=16, pady=12, sticky="w")
+        self.folder_entry = ctk.CTkEntry(folder_card, height=32, corner_radius=8, fg_color=SURFACE_DIM, border_width=0)
+        self.folder_entry.grid(row=0, column=1, padx=(0, 8), pady=12, sticky="ew")
+        self.folder_entry.insert(0, os.path.join(os.path.expanduser('~'), 'Downloads'))
+        self.folder_btn = ctk.CTkButton(folder_card, text="Обзор", command=self.browse_folder, width=70, height=32, corner_radius=8, fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER, text_color=TEXT_PRIMARY)
+        self.folder_btn.grid(row=0, column=2, padx=(0, 16), pady=12)
+
+        subs_card = ctk.CTkFrame(self.adv_frame, fg_color=CARD_BG, corner_radius=12)
+        subs_card.grid(row=2, column=0, pady=5, sticky="ew")
+        subs_card.grid_columnconfigure(1, weight=1)
         
         self.trim_var = ctk.BooleanVar(value=False)
-        self.trim_check = ctk.CTkCheckBox(time_frame, text="⏱ Обрезка", variable=self.trim_var,
-                                          font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
-                                          checkbox_width=18, checkbox_height=18, command=self._on_trim_toggle)
-        self.trim_check.pack(side="left", padx=(0, 8))
-        
-        self.trim_start_entry = ctk.CTkEntry(time_frame, placeholder_text="00:00", width=60, height=28, state="disabled")
-        self.trim_start_entry.pack(side="left", padx=(0, 4))
-        
-        ctk.CTkLabel(time_frame, text="-", font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
-        
-        self.trim_end_entry = ctk.CTkEntry(time_frame, placeholder_text="00:00", width=60, height=28, state="disabled")
-        self.trim_end_entry.pack(side="left", padx=(4, 0))
-
-        # ═══ PLAYLIST CARD (скрыта по умолчанию) ═══
-        self.playlist_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12,
-                                          border_width=1, border_color=PLAYLIST_BADGE)
-        self.playlist_card.grid(row=5, column=0, padx=24, pady=8, sticky="ew")
-        self.playlist_card.grid_columnconfigure(0, weight=1)
-        self.playlist_card.grid_remove()  # Скрыта по умолчанию
-
-        # ═══ OUTPUT FOLDER ═══
-        folder_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=12,
-                                   border_width=1, border_color=CARD_BORDER)
-        folder_card.grid(row=6, column=0, padx=24, pady=8, sticky="ew")
-        folder_card.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(folder_card, text="📁  Папка сохранения",
-                     font=ctk.CTkFont(size=13), text_color=TEXT_SECONDARY
-                     ).grid(row=0, column=0, columnspan=3, padx=16, pady=(12, 6), sticky="w")
-
-        self.folder_entry = ctk.CTkEntry(folder_card, height=36, corner_radius=8)
-        self.folder_entry.grid(row=1, column=0, columnspan=2, padx=(16, 8), pady=(0, 12), sticky="ew")
-
-        default_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
-        self.folder_entry.insert(0, default_dir)
-
-        self.folder_btn = ctk.CTkButton(folder_card, text="📂 Изменить", command=self.browse_folder,
-                                        width=100, height=36, corner_radius=8,
-                                        fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER)
-        self.folder_btn.grid(row=1, column=2, padx=(0, 16), pady=(0, 12))
-
-        # ═══ SUBTITLES ROW (compact) ═══
-        subs_card = ctk.CTkFrame(container, corner_radius=12,
-                                 border_width=1, border_color=CARD_BORDER)
-        subs_card.grid(row=7, column=0, padx=24, pady=8, sticky="ew")
-        subs_card.grid_columnconfigure(0, weight=1)
-
-        subs_row = ctk.CTkFrame(subs_card, fg_color="transparent")
-        subs_row.grid(row=0, column=0, padx=16, pady=12, sticky="ew")
+        self.trim_check = ctk.CTkCheckBox(subs_card, text="Обрезка по времени", variable=self.trim_var, command=self._on_trim_toggle, font=ctk.CTkFont(size=14))
+        self.trim_check.grid(row=0, column=0, padx=16, pady=12, sticky="w")
+        trim_frame = ctk.CTkFrame(subs_card, fg_color="transparent")
+        trim_frame.grid(row=0, column=1, padx=(0, 16), pady=12, sticky="e")
+        self.trim_start_entry = ctk.CTkEntry(trim_frame, placeholder_text="00:00", width=60, height=28, state="disabled", fg_color=SURFACE_DIM, border_width=0)
+        self.trim_start_entry.pack(side="left")
+        ctk.CTkLabel(trim_frame, text="-", font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
+        self.trim_end_entry = ctk.CTkEntry(trim_frame, placeholder_text="00:00", width=60, height=28, state="disabled", fg_color=SURFACE_DIM, border_width=0)
+        self.trim_end_entry.pack(side="left")
 
         self.sponsorblock_var = ctk.BooleanVar(value=True)
-        self.sponsor_check = ctk.CTkCheckBox(
-            subs_row, text="🛡 Вырезать спонсоров",
-            variable=self.sponsorblock_var,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=TEXT_PRIMARY,
-            checkbox_width=18, checkbox_height=18, corner_radius=4
-        )
-        self.sponsor_check.pack(side="left", padx=(0, 16))
+        self.sponsor_check = ctk.CTkCheckBox(subs_card, text="Вырезать спонсоров", variable=self.sponsorblock_var, font=ctk.CTkFont(size=14))
+        self.sponsor_check.grid(row=1, column=0, padx=16, pady=(0, 12), sticky="w")
 
         self.subs_var = ctk.BooleanVar(value=False)
         self.auto_subs_var = ctk.BooleanVar(value=True)
-
-        self.subs_check = ctk.CTkCheckBox(
-            subs_row, text="📝  Субтитры",
-            variable=self.subs_var,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=TEXT_PRIMARY,
-            checkbox_width=22, checkbox_height=22, corner_radius=5,
-            command=self._on_subs_toggle
-        )
-        self.subs_check.pack(side="left", padx=(0, 16))
-
-        ctk.CTkLabel(subs_row, text="Язык:", font=ctk.CTkFont(size=13),
-                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 6))
-
-        self.subs_lang_combo = ctk.CTkComboBox(
-            subs_row,
-            values=["ru", "en", "ru, en", "de", "fr", "es", "zh", "ar", "pt", "uk", "ja", "ko"],
-            width=110, height=32, corner_radius=6,
-            font=ctk.CTkFont(size=13)
-        )
+        self.subs_check = ctk.CTkCheckBox(subs_card, text="Субтитры", variable=self.subs_var, font=ctk.CTkFont(size=14), command=self._on_subs_toggle)
+        self.subs_check.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="w")
+        
+        subs_options = ctk.CTkFrame(subs_card, fg_color="transparent")
+        subs_options.grid(row=2, column=1, padx=(0, 16), pady=(0, 12), sticky="e")
+        self.subs_lang_combo = ctk.CTkComboBox(subs_options, values=["ru", "en", "ru, en", "de", "fr", "es"], width=70, height=28, fg_color=SURFACE_DIM, border_width=0, button_color=SURFACE_DIM)
         self.subs_lang_combo.set("ru, en")
-        self.subs_lang_combo.pack(side="left", padx=(0, 16))
-
-        ctk.CTkLabel(subs_row, text="Режим:", font=ctk.CTkFont(size=13),
-                     text_color=TEXT_SECONDARY).pack(side="left", padx=(0, 6))
-
-        self.subs_mode_combo = ctk.CTkComboBox(
-            subs_row,
-            values=["Вшить в видео 🎬", "Вшить (Стиль YouTube 🎬)", "Отдельный файл (.srt)", "Отдельный файл (.vtt)", "Отдельный файл (.ass)", "Отдельный файл (.json3)"],
-            width=200, height=32, corner_radius=6,
-            font=ctk.CTkFont(size=13), state="readonly"
-        )
+        self.subs_lang_combo.pack(side="left", padx=(0, 8))
+        self.subs_mode_combo = ctk.CTkComboBox(subs_options, values=["Вшить в видео 🎬", "Отдельный файл (.srt)"], width=130, height=28, fg_color=SURFACE_DIM, border_width=0, button_color=SURFACE_DIM, state="readonly")
         self.subs_mode_combo.set("Вшить в видео 🎬")
-        self.subs_mode_combo.pack(side="left", padx=(0, 16))
+        self.subs_mode_combo.pack(side="left", padx=(0, 8))
+        self.auto_subs_check = ctk.CTkCheckBox(subs_options, text="Авто", variable=self.auto_subs_var, font=ctk.CTkFont(size=12))
+        self.auto_subs_check.pack(side="left")
 
-        self.auto_subs_check = ctk.CTkCheckBox(
-            subs_row, text="Автоперевод",
-            variable=self.auto_subs_var,
-            font=ctk.CTkFont(size=12),
-            text_color=TEXT_SECONDARY,
-            checkbox_width=18, checkbox_height=18, corner_radius=4
-        )
-        self.auto_subs_check.pack(side="left", padx=(0, 8))
+        self.subs_avail_label = ctk.CTkLabel(self.adv_frame, text="", font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY)
+        self.subs_avail_label.grid(row=3, column=0, padx=24, pady=0, sticky="w")
 
-        self.subs_avail_label = ctk.CTkLabel(
-            subs_card, text="", font=ctk.CTkFont(size=11),
-            text_color=TEXT_SECONDARY
-        )
-        self.subs_avail_label.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="w")
+        # PLAYLIST CARD
+        self.playlist_card = ctk.CTkFrame(container, fg_color=CARD_BG, corner_radius=16, border_width=1, border_color=PLAYLIST_BADGE)
+        self.playlist_card.grid(row=6, column=0, padx=40, pady=10, sticky="ew")
+        self.playlist_card.grid_columnconfigure(0, weight=1)
+        self.playlist_card.grid_remove()
 
-
-
-        # ═══ DOWNLOAD / CANCEL BUTTONS ═══
-        self.download_btn = ctk.CTkButton(container, text="⬇️  Скачать", command=self.start_download,
-                                          height=48, corner_radius=10,
-                                          font=ctk.CTkFont(size=16, weight="bold"),
+        # DOWNLOAD BUTTON
+        self.download_btn = ctk.CTkButton(container, text="Скачать", command=self.start_download,
+                                          height=56, corner_radius=12,
+                                          font=ctk.CTkFont(size=18, weight="bold"),
                                           fg_color=SUCCESS_COLOR, hover_color=SUCCESS_HOVER)
-        self.download_btn.grid(row=8, column=0, padx=24, pady=14, sticky="ew")
+        self.download_btn.grid(row=7, column=0, padx=40, pady=(20, 10), sticky="ew")
         self.download_btn.configure(state="disabled")
 
-        # A: кнопка отмены (скрыта до начала скачивания)
-        self.cancel_btn = ctk.CTkButton(container, text="⛔  Отменить загрузку", command=self.cancel_download,
-                                        height=48, corner_radius=10,
-                                        font=ctk.CTkFont(size=16, weight="bold"),
+        self.cancel_btn = ctk.CTkButton(container, text="Отменить", command=self.cancel_download,
+                                        height=56, corner_radius=12,
+                                        font=ctk.CTkFont(size=18, weight="bold"),
                                         fg_color="#E11D48", hover_color="#BE123C")
-        self.cancel_btn.grid(row=8, column=0, padx=24, pady=14, sticky="ew")
-        self.cancel_btn.grid_remove()  # скрыта по умолчанию
+        self.cancel_btn.grid(row=7, column=0, padx=40, pady=(20, 10), sticky="ew")
+        self.cancel_btn.grid_remove()
 
-        # ═══ PROGRESS ═══
+        # PROGRESS
         progress_frame = ctk.CTkFrame(container, fg_color="transparent")
-        progress_frame.grid(row=9, column=0, padx=24, pady=(4, 20), sticky="ew")
+        progress_frame.grid(row=8, column=0, padx=40, pady=(0, 30), sticky="ew")
         progress_frame.grid_columnconfigure(0, weight=1)
 
-        self.status_label = ctk.CTkLabel(progress_frame, text="⏳ Ожидание...",
-                                         font=ctk.CTkFont(size=13), text_color=TEXT_SECONDARY)
+        self.status_label = ctk.CTkLabel(progress_frame, text="Ожидание...",
+                                         font=ctk.CTkFont(size=14), text_color=TEXT_SECONDARY)
         self.status_label.grid(row=0, column=0, sticky="w")
 
         self.queue_label = ctk.CTkLabel(progress_frame, text="",
-                                        font=ctk.CTkFont(size=12, weight="bold"), text_color=PLAYLIST_BADGE)
+                                        font=ctk.CTkFont(size=13, weight="bold"), text_color=PLAYLIST_BADGE)
         self.queue_label.grid(row=0, column=1, sticky="e")
 
-        self.progress_bar = ctk.CTkProgressBar(progress_frame, height=10, corner_radius=5,
-                                                progress_color=ACCENT_COLOR)
-        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self.progress_bar = ctk.CTkProgressBar(progress_frame, height=8, corner_radius=4,
+                                                progress_color=ACCENT_COLOR, fg_color=SURFACE_DIM)
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         self.progress_bar.set(0)
 
         self.build_history_tab()
         self.build_settings_tab()
+        self.select_frame_by_name("download")
 
-        # Bind context menu (right click) to entries
         self._setup_context_menus()
-
-        # J: горячие клавиши
+        self.hamburger_btn.lift()
         self.bind("<Control-v>", lambda e: self.paste_url())
         self.bind("<Return>", lambda e: self.start_get_info() if self.info_btn.cget('state') == 'normal' else None)
+
+    def select_frame_by_name(self, name):
+        self.nav_btn_download.configure(fg_color=SECONDARY_BTN if name == "download" else "transparent")
+        self.nav_btn_history.configure(fg_color=SECONDARY_BTN if name == "history" else "transparent")
+        self.nav_btn_settings.configure(fg_color=SECONDARY_BTN if name == "settings" else "transparent")
+
+        if name == "download":
+            self.download_frame.grid(row=0, column=1, sticky="nsew")
+        else:
+            self.download_frame.grid_forget()
+        
+        if name == "history":
+            self.history_frame.grid(row=0, column=1, sticky="nsew")
+        else:
+            self.history_frame.grid_forget()
+            
+        if name == "settings":
+            self.settings_frame.grid(row=0, column=1, sticky="nsew")
+        else:
+            self.settings_frame.grid_forget()
+
+    def toggle_sidebar(self):
+        if self.sidebar_expanded:
+            self._animate_sidebar(200, 0, -50)
+            self.sidebar_expanded = False
+        else:
+            self._animate_sidebar(0, 200, 50)
+            self.sidebar_expanded = True
+
+    def _animate_sidebar(self, current, target, step):
+        current += step
+        if (step < 0 and current <= target) or (step > 0 and current >= target):
+            current = target
+            self.sidebar_frame.configure(width=current)
+            if current == 0:
+                self.sidebar_frame.grid_remove()
+            return
+            
+        if current > 0 and not self.sidebar_frame.winfo_ismapped():
+            self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+            
+        self.sidebar_frame.configure(width=current)
+        self.update_idletasks() # Force UI refresh to prevent jerkiness
+        self.after(10, lambda: self._animate_sidebar(current, target, step))
+
+    def show_toast(self, message, type="info", duration=3000):
+        ToastNotification(self, message, type=type, duration=duration)
+
+    def _toggle_batch_mode(self):
+        if self.batch_mode_var.get():
+            self.url_entry.grid_remove()
+            self.batch_entry.grid()
+        else:
+            self.batch_entry.grid_remove()
+            self.url_entry.grid()
+
+    def toggle_advanced(self):
+        if self.advanced_visible:
+            self.adv_frame.grid_remove()
+            self.adv_btn.configure(text="Расширенные настройки ▼")
+            self.advanced_visible = False
+        else:
+            self.adv_frame.grid()
+            self.adv_btn.configure(text="Расширенные настройки ▲")
+            self.advanced_visible = True
+            
+        # We can simulate animation by just calling update_idletasks()
+        self.update_idletasks()
+
 
     def _on_format_change(self, choice):
         if "аудио" in choice.lower() or "audio" in choice.lower():
@@ -441,10 +484,10 @@ class App(ctk.CTk):
 
     # ─── EXTRA TABS ───
     def build_history_tab(self):
-        for w in self.tab_history.winfo_children():
+        for w in self.history_frame.winfo_children():
             w.destroy()
             
-        header = ctk.CTkFrame(self.tab_history, fg_color="transparent")
+        header = ctk.CTkFrame(self.history_frame, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(20, 10))
         
         ctk.CTkLabel(header, text="📜 История скачиваний", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
@@ -453,7 +496,7 @@ class App(ctk.CTk):
                                   fg_color="#E11D48", hover_color="#BE123C")
         clear_btn.pack(side="right")
         
-        self.history_scroll = ctk.CTkScrollableFrame(self.tab_history, fg_color=BG_DARK)
+        self.history_scroll = ctk.CTkScrollableFrame(self.history_frame, fg_color=BG_DARK)
         self.history_scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.refresh_history()
 
@@ -495,13 +538,13 @@ class App(ctk.CTk):
             dl_btn.pack(side="left", padx=5)
 
     def download_from_history(self, url):
-        self.tabview.set("Скачать")
+        self.select_frame_by_name("download")
         self.url_entry.set(url)
         self.start_get_info()
 
     def open_folder(self, path):
         if not path or not os.path.isdir(path):
-            messagebox.showerror("Ошибка", f"Папка не найдена:\n{path}")
+            self.show_toast( f"Папка не найдена:\n{path}")
             return
         try:
             if platform.system() == "Windows":
@@ -511,13 +554,13 @@ class App(ctk.CTk):
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось открыть папку:\n{e}")
+            self.show_toast( f"Не удалось открыть папку:\n{e}")
 
     def build_settings_tab(self):
-        title = ctk.CTkLabel(self.tab_settings, text="⚙️ Настройки", font=ctk.CTkFont(size=20, weight="bold"))
+        title = ctk.CTkLabel(self.settings_frame, text="⚙️ Настройки", font=ctk.CTkFont(size=20, weight="bold"))
         title.pack(anchor="w", padx=30, pady=(30, 20))
         
-        card = ctk.CTkFrame(self.tab_settings, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        card = ctk.CTkFrame(self.settings_frame, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
         card.pack(fill="x", padx=30, pady=10)
         
         self.meta_var = ctk.BooleanVar(value=self.history_mgr.get_setting("embed_metadata"))
@@ -564,6 +607,14 @@ class App(ctk.CTk):
         notif_cb = ctk.CTkCheckBox(card, text="Системные уведомления по завершении (Windows)", variable=self.notif_var, 
                                    command=self._save_notif_settings, font=ctk.CTkFont(size=14))
         notif_cb.pack(anchor="w", padx=20, pady=(0, 20))
+        
+        # Updater
+        update_frame = ctk.CTkFrame(card, fg_color="transparent")
+        update_frame.pack(fill="x", padx=20, pady=(0, 20))
+        
+        ctk.CTkLabel(update_frame, text="Обновление ядра:", font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 15))
+        self.update_btn = ctk.CTkButton(update_frame, text="🔄 Обновить yt-dlp", command=self._update_ytdlp, fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER, width=150)
+        self.update_btn.pack(side="left")
 
     def _save_rate_limit(self):
         try:
@@ -574,6 +625,25 @@ class App(ctk.CTk):
 
     def _save_notif_settings(self):
         self.history_mgr.set_setting("notifications_enabled", self.notif_var.get())
+
+    def _update_ytdlp(self):
+        self.update_btn.configure(state="disabled", text="🔄 Обновление...")
+        self.show_toast("Началось обновление yt-dlp. Пожалуйста, подождите...")
+        threading.Thread(target=self._run_ytdlp_update, daemon=True).start()
+
+    def _run_ytdlp_update(self):
+        import subprocess
+        import sys
+        try:
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.after(0, lambda: self.show_toast("✅ Ядро yt-dlp успешно обновлено!", "success"))
+            else:
+                self.after(0, lambda: self.show_toast("❌ Ошибка при обновлении yt-dlp.", "error"))
+        except Exception as e:
+            self.after(0, lambda: self.show_toast(f"❌ Ошибка: {e}", "error"))
+        finally:
+            self.after(0, lambda: self.update_btn.configure(state="normal", text="🔄 Обновить yt-dlp"))
 
     def _save_settings(self):
         self.history_mgr.set_setting("embed_metadata", self.meta_var.get())
@@ -727,6 +797,83 @@ class App(ctk.CTk):
             return None
 
     # ─── PLAYLIST UI ───
+
+    def _show_search_window(self, info):
+        if hasattr(self, '_search_window') and self._search_window and self._search_window.winfo_exists():
+            self._search_window.focus()
+            return
+
+        videos = info.get('videos', [])
+        count = len(videos)
+
+        self._search_window = ctk.CTkToplevel(self)
+        self._search_window.title(f"🔍 Результаты поиска ({count})")
+        self._search_window.geometry("750x600")
+        self._search_window.attributes('-topmost', True)
+
+        self._search_window.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 750) // 2
+        y = self.winfo_y() + (self.winfo_height() - 600) // 2
+        self._search_window.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(self._search_window, text="🔍 Результаты поиска YouTube", font=ctk.CTkFont(size=18, weight="bold"), text_color=TEXT_PRIMARY).pack(pady=(16, 8))
+
+        scroll_frame = ctk.CTkScrollableFrame(self._search_window, fg_color=CARD_BG, corner_radius=10)
+        scroll_frame.pack(padx=16, pady=8, fill="both", expand=True)
+        scroll_frame.grid_columnconfigure(0, weight=1)
+
+        self._search_thumb_labels = []
+
+        for i, video in enumerate(videos):
+            row_bg = CARD_BG_ALT if i % 2 == 0 else CARD_BG
+            row_frame = ctk.CTkFrame(scroll_frame, fg_color=row_bg, corner_radius=6)
+            row_frame.grid(row=i, column=0, sticky="ew", pady=2, padx=4)
+            row_frame.grid_columnconfigure(1, weight=1)
+
+            # Thumb placeholder
+            thumb_lbl = ctk.CTkLabel(row_frame, text="⏳", width=80, height=45, fg_color=SURFACE_DIM, corner_radius=4)
+            thumb_lbl.grid(row=0, column=0, padx=10, pady=8)
+            
+            thumb_url = video.get('thumbnail')
+            if thumb_url:
+                self._search_thumb_labels.append((thumb_lbl, thumb_url))
+
+            title_text = video.get('title', '—')
+            info_text = f"👤 {video.get('uploader', '—')}  |  ⏱ {video.get('duration', '—')}"
+
+            text_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            text_frame.grid(row=0, column=1, sticky="w", padx=10, pady=8)
+            
+            ctk.CTkLabel(text_frame, text=title_text, font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_PRIMARY, anchor="w", wraplength=400).pack(anchor="w")
+            ctk.CTkLabel(text_frame, text=info_text, font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY, anchor="w").pack(anchor="w")
+
+            btn = ctk.CTkButton(row_frame, text="Выбрать", width=90, fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER, command=lambda u=video.get('url'): self._select_search_result(u))
+            btn.grid(row=0, column=2, padx=10, pady=8)
+
+        ctk.CTkButton(self._search_window, text="Закрыть", width=120, fg_color=SECONDARY_BTN, hover_color=SECONDARY_BTN_HOVER, command=self._search_window.destroy).pack(pady=12)
+
+        # Start loading thumbnails
+        self._search_ctk_images = []  # To prevent garbage collection
+        threading.Thread(target=self._load_search_thumbs, daemon=True).start()
+
+    def _load_search_thumbs(self):
+        for lbl, url in self._search_thumb_labels:
+            if not self._search_window.winfo_exists():
+                break
+            try:
+                img = self.load_image_from_url(url)
+                if img:
+                    self._search_ctk_images.append(img)
+                    if self._search_window.winfo_exists() and lbl.winfo_exists():
+                        self.after(0, lambda l=lbl, i=img: l.configure(image=i, text=""))
+            except Exception:
+                pass
+
+    def _select_search_result(self, url):
+        self.url_entry.set(url)
+        if self._search_window and self._search_window.winfo_exists():
+            self._search_window.destroy()
+        self.start_get_info()
 
     def _build_playlist_card(self, info):
         """Строит карточку плейлиста с подробной информацией."""
@@ -938,16 +1085,42 @@ class App(ctk.CTk):
     # ─── GET INFO ───
 
     def start_get_info(self):
+        if self.batch_mode_var.get():
+            urls_text = self.batch_entry.get("1.0", "end-1c")
+            urls = [u.strip() for u in urls_text.splitlines() if u.strip().startswith(('http://', 'https://'))]
+            if not urls:
+                self.show_toast("Введите хотя бы одну корректную ссылку!")
+                return
+            
+            info = {
+                'status': 'success',
+                'type': 'batch',
+                'urls': urls,
+                'video_count': len(urls),
+                'title': f'Пакетная загрузка ({len(urls)} ссылок)',
+                'formats': ['2160p (4K)', '1440p (2K)', '1080p (Full HD)', '720p (HD)', '480p', '360p', '🎵 Только аудио (MP3)'],
+            }
+            self.info_btn.configure(state="disabled")
+            self.download_btn.configure(state="disabled")
+            self.set_status("🔄 Инициализация пакета...")
+            self.progress_bar.set(0)
+            self.after(500, self._info_fetched, info)
+            return
+
         url = self.url_entry.get().strip()
         if not url:
-            messagebox.showerror("Ошибка", "Введите ссылку на видео!")
-            return
-        if not url.startswith(('http://', 'https://')):
-            messagebox.showerror("Ошибка", "Ссылка должна начинаться с http:// или https://")
+            self.show_toast("Введите ссылку или поисковый запрос!")
             return
             
-        self.history_mgr.add_url(url)
-        self.url_entry.configure(values=self.history_mgr.get_urls())
+        is_search = False
+        search_query_url = url
+        if not url.startswith(('http://', 'https://')):
+            is_search = True
+            search_query_url = f"ytsearch10:{url}"
+            self.url_entry.set("")  # Очищаем поле после поиска
+        else:
+            self.history_mgr.add_url(url)  # Сохраняем только настоящие URL
+            self.url_entry.configure(values=self.history_mgr.get_urls())
 
         cookies = self.cookies_entry.get().strip()
         browser = None
@@ -963,17 +1136,19 @@ class App(ctk.CTk):
         # Скрываем плейлист-карточку
         self.playlist_card.grid_remove()
 
-        threading.Thread(target=self._get_info_thread, args=(url, cookies, browser), daemon=True).start()
+        threading.Thread(target=self._get_info_thread, args=(search_query_url, cookies, browser, is_search), daemon=True).start()
 
-    def _get_info_thread(self, url, cookies, browser):
+    def _get_info_thread(self, url, cookies, browser, is_search=False):
         info = self.downloader.fetch_info(url, cookies if cookies else None, browser)
+        if is_search and info.get('status') == 'success':
+            info['is_search'] = True
         self.after(0, self._info_fetched, info)
 
     def _info_fetched(self, info):
         self.info_btn.configure(state="normal")
 
         if info.get('status') == 'error':
-            messagebox.showerror("Ошибка", info.get('message', 'Неизвестная ошибка'))
+            self.show_toast( info.get('message', 'Неизвестная ошибка'))
             self.set_status("❌ Ошибка получения информации.")
             return
 
@@ -981,19 +1156,28 @@ class App(ctk.CTk):
         title = info.get('title', '—')
         formats = info.get('formats', ['—'])
         thumb_url = info.get('thumbnail')
-        is_playlist = info.get('type') == 'playlist'
+        is_search = info.get('is_search', False)
+        if is_search:
+            self.set_status("✅ Поиск завершён! Выберите видео.")
+            self._show_search_window(info)
+            return
 
-        # ── Обновляем превью-карточку ──
-        if is_playlist:
+        is_playlist = info.get('type') == 'playlist'
+        is_batch = info.get('type') == 'batch'
+
+                # ── Обновляем превью-карточку ──
+        if is_playlist or is_batch:
             count = info.get('video_count', 0)
-            self.video_title_label.configure(text=f"📋 {title}")
-            duration_text = f"🎬 {count} видео  •  ⏱ {info.get('total_duration', '—')}"
+            self.video_title_label.configure(text=f"📦 {title}")
+            duration_text = f"🎬 {count} видео"
+            if is_playlist: duration_text += f"  •  ⏱ {info.get('total_duration', '—')}"
             self.duration_label.configure(text=duration_text)
 
-            # Строим карточку плейлиста
-            self._build_playlist_card(info)
+            if is_playlist:
+                self._build_playlist_card(info)
+            else:
+                self.playlist_card.grid_remove()
 
-            # Обновляем кнопку скачивания
             self.download_btn.configure(text=f"⬇️  Скачать все {count} видео")
         else:
             duration = info.get('duration', '')
@@ -1058,7 +1242,11 @@ class App(ctk.CTk):
     # ─── DOWNLOAD ───
 
     def start_download(self):
-        url = self.url_entry.get().strip()
+        if self.batch_mode_var.get():
+            urls_text = self.batch_entry.get("1.0", "end-1c")
+            url = [u.strip() for u in urls_text.splitlines() if u.strip().startswith(('http://', 'https://'))]
+        else:
+            url = self.url_entry.get().strip()
         cookies = self.cookies_entry.get().strip()
         fmt = self.format_combo.get()
         out_dir = self.folder_entry.get().strip()
@@ -1079,7 +1267,7 @@ class App(ctk.CTk):
             try:
                 os.makedirs(out_dir)
             except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось создать папку:\n{e}")
+                self.show_toast( f"Не удалось создать папку:\n{e}")
                 return
 
         audio_fmt = self.audio_format_combo.get()

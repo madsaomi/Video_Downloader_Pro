@@ -23,8 +23,9 @@ class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
                     with open(filepath, 'r', encoding='utf-8') as f:
                         content = f.read()
                     import re
-                    # YouTube Default Style: Black transparent background box (BorderStyle=3), Roboto font, white text.
-                    new_style = "Style: Default,Roboto,20,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,3,0,0,2,10,10,10,1"
+                    # YouTube Default Style: White text, thick black outline (Outline=3), dark semi-opaque background box (BorderStyle=3)
+                    # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+                    new_style = "Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,3,0,2,10,10,30,1"
                     # Заменяем первый стиль (Default или любой другой) — более надёжно
                     if re.search(r'Style: Default,', content):
                         content = re.sub(r'Style: Default,[^\r\n]*', new_style, content, count=1)
@@ -638,7 +639,10 @@ class VideoDownloader:
                 if embed_subtitles and youtube_style and not is_audio:
                     ydl.add_post_processor(YouTubeStylePP(), when='post_process')
 
-                ydl.download([url])
+                if isinstance(url, list):
+                    ydl.download(url)
+                else:
+                    ydl.download([url])
             if finished_callback:
                 finished_callback(playlist_state.get('errors', 0))
         except _CancelledException:
