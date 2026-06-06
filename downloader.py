@@ -1,7 +1,14 @@
 import os
 import sys
+import logging
+import re
+import threading
+from typing import List, Optional, Tuple, Callable
+
 import yt_dlp
-import traceback
+import requests
+
+logger = logging.getLogger(__name__)
 
 # Стратегии клиентов YouTube — пробуем по очереди, пока не получим видеоформаты
 YOUTUBE_CLIENT_STRATEGIES = [
@@ -12,7 +19,7 @@ YOUTUBE_CLIENT_STRATEGIES = [
 
 
 class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
-    def run(self, info):
+    def run(self, info: dict) -> Tuple[List, dict]:
         subs = info.get('requested_subtitles')
         if not subs:
             return [], info
@@ -22,11 +29,7 @@ class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         content = f.read()
-                    import re
-                    # YouTube Default Style: White text, thick black outline (Outline=3), dark semi-opaque background box (BorderStyle=3)
-                    # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
                     new_style = "Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&HB4000000,-1,0,0,0,100,100,0,0,3,3,0,2,10,10,30,1"
-                    # Заменяем первый стиль (Default или любой другой) — более надёжно
                     if re.search(r'Style: Default,', content):
                         content = re.sub(r'Style: Default,[^\r\n]*', new_style, content, count=1)
                     elif re.search(r'^Style: [^,]+,', content, re.MULTILINE):
@@ -38,14 +41,21 @@ class YouTubeStylePP(yt_dlp.postprocessor.PostProcessor):
         return [], info
 
 class _ErrorCountLogger:
-    """Логгер yt-dlp, считающий ошибки отдельных видео (используется при ignoreerrors=True)."""
-    def __init__(self, state):
+    MAX_SAVED = 5
+
+    def __init__(self, state: dict) -> None:
         self._state = state
-    def debug(self, msg): pass
-    def info(self, msg): pass
-    def warning(self, msg): pass
-    def error(self, msg):
-        self._state['errors'] = self._state.get('errors', 0) + 1
+        self._lock = threading.Lock()
+        self.errors: List[str] = []
+
+    def debug(self, msg: str) -> None: pass
+    def info(self, msg: str) -> None: pass
+    def warning(self, msg: str) -> None: pass
+    def error(self, msg: str) -> None:
+        with self._lock:
+            self._state['errors'] = self._state.get('errors', 0) + 1
+            if len(self.errors) < self.MAX_SAVED:
+                self.errors.append(msg)
 
 
 class _CancelledException(Exception):
@@ -54,13 +64,11 @@ class _CancelledException(Exception):
 
 
 class VideoDownloader:
-    def __init__(self):
-        # Определяем путь к папке приложения
+    def __init__(self) -> None:
         if getattr(sys, 'frozen', False):
-            # Если приложение запущено как скомпилированный .exe от PyInstaller
-            self.app_dir = sys._MEIPASS
+            self.app_dir: str = sys._MEIPASS
         else:
-            self.app_dir = os.path.dirname(os.path.abspath(__file__))
+            self.app_dir: str = os.path.dirname(os.path.abspath(__file__))
 
         # Добавляем app_dir в PATH, чтобы yt-dlp нашёл ffmpeg.exe и deno.exe
         if self.app_dir not in os.environ.get('PATH', ''):
@@ -73,8 +81,7 @@ class VideoDownloader:
         # Запоминаем последнюю рабочую стратегию
         self._working_strategy_idx = 0
 
-    def _base_opts(self, cookies_file=None, strategy_idx=0):
-        """Базовые опции, общие для всех операций."""
+    def _base_opts(self, cookies_file: Optional[str] = None, strategy_idx: int = 0) -> dict:
         strategy = YOUTUBE_CLIENT_STRATEGIES[strategy_idx % len(YOUTUBE_CLIENT_STRATEGIES)]
 
         opts = {
@@ -82,7 +89,7 @@ class VideoDownloader:
             'no_warnings': True,
             'ignoreerrors': False,
             'extractor_args': {'youtube': strategy},
-            'socket_timeout': 30,
+            'socket_timeout': 60,
         }
         if self.ffmpeg_location:
             opts['ffmpeg_location'] = self.ffmpeg_location
@@ -90,11 +97,10 @@ class VideoDownloader:
             opts['cookiefile'] = cookies_file
         return opts
 
-    def _handle_error(self, err_str):
-        """Централизованная обработка типичных ошибок yt-dlp."""
+    def _handle_error(self, err_str: str) -> str:
         if 'Could not copy Chrome cookie database' in err_str:
             return (
-                '⛔ Ошибка доступа к Chrome Cookies.\n\n'
+                'Ошибка доступа к Chrome Cookies.\n\n'
                 'Причина: Браузер Chrome сейчас запущен и блокирует доступ к своим данным.\n\n'
                 'Решение:\n'
                 '1. ПОЛНОСТЬЮ ЗАКРОЙТЕ CHROME и попробуйте снова.\n'
@@ -103,7 +109,7 @@ class VideoDownloader:
 
         if 'Failed to decrypt with DPAPI' in err_str:
             return (
-                '⛔ Ошибка расшифровки cookies браузера.\n\n'
+                'Ошибка расшифровки cookies браузера.\n\n'
                 'Windows заблокировал доступ к зашифрованным cookies.\n\n'
                 'Решение:\n'
                 '1. Используйте файл cookies.txt (экспортируйте расширением для браузера).\n'
@@ -112,7 +118,7 @@ class VideoDownloader:
 
         if 'Sign in to confirm' in err_str or 'bot' in err_str.lower():
             return (
-                '🛑 YouTube заблокировал запрос (защита от ботов).\n\n'
+                'YouTube заблокировал запрос (защита от ботов).\n\n'
                 'Решения:\n'
                 '1. Экспортируйте cookies.txt из браузера и укажите файл.\n'
                 '2. Попробуйте закрыть Chrome и использовать "Cookies из браузера".\n'
@@ -121,7 +127,7 @@ class VideoDownloader:
 
         if 'Requested format is not available' in err_str or 'No video formats found' in err_str:
             return (
-                '⚠️ Запрошенный формат недоступен.\n\n'
+                'Запрошенный формат недоступен.\n\n'
                 'YouTube ограничивает доступ к видеоформатам без авторизации.\n\n'
                 'Решение:\n'
                 '1. Экспортируйте cookies.txt и укажите в приложении.\n'
@@ -130,13 +136,11 @@ class VideoDownloader:
 
         return err_str
 
-    def _is_youtube(self, url):
-        """Проверяет, является ли URL ссылкой на YouTube."""
+    def _is_youtube(self, url: str) -> bool:
         yt_domains = ['youtube.com', 'youtu.be', 'youtube-nocookie.com', 'm.youtube.com']
         return any(d in url.lower() for d in yt_domains)
 
-    def _extract_video_resolutions(self, formats):
-        """Извлекает доступные видео-разрешения из списка форматов."""
+    def _extract_video_resolutions(self, formats: List[dict]) -> List[int]:
         available_resolutions = set()
         for f in formats:
             vcodec = f.get('vcodec', 'none')
@@ -152,8 +156,7 @@ class VideoDownloader:
 
         return sorted(list(available_resolutions), reverse=True)
 
-    def _format_duration(self, seconds):
-        """Форматирует секунды в читаемую строку."""
+    def _format_duration(self, seconds: Optional[int]) -> str:
         if not seconds:
             return ""
         seconds = int(seconds)
@@ -163,8 +166,7 @@ class VideoDownloader:
             return f"{hours}:{mins:02d}:{secs:02d}"
         return f"{mins}:{secs:02d}"
 
-    def _resolutions_to_labels(self, resolutions):
-        """Превращает список разрешений в красивые лейблы для UI."""
+    def _resolutions_to_labels(self, resolutions: List[int]) -> List[str]:
         labels = []
         for res in resolutions:
             if res >= 2160:
@@ -177,17 +179,18 @@ class VideoDownloader:
                 labels.append(f"{res}p (HD)")
             else:
                 labels.append(f"{res}p")
-        labels.append("🎵 Только аудио (MP3)")
-        return labels if len(labels) > 1 else ["🎵 Только аудио (MP3)"]
+        labels.append("Только аудио (MP3)")
+        return labels if len(labels) > 1 else ["Только аудио (MP3)"]
 
-    def _try_extract_with_strategies(self, url, cookies_file, browser_cookies, extra_opts=None):
-        """Пробует извлечь информацию используя разные YouTube-стратегии."""
+    def _try_extract_with_strategies(
+        self, url: str, cookies_file: Optional[str],
+        browser_cookies: Optional[str], extra_opts: Optional[dict] = None,
+    ) -> Tuple[Optional[dict], Optional[str]]:
         is_yt = self._is_youtube(url)
         strategies_to_try = len(YOUTUBE_CLIENT_STRATEGIES) if is_yt else 1
 
-        best_info = None
-        last_error_msg = None
-        best_resolutions = []
+        best_info: Optional[dict] = None
+        last_error_msg: Optional[str] = None
 
         for attempt in range(strategies_to_try):
             idx = (self._working_strategy_idx + attempt) % len(YOUTUBE_CLIENT_STRATEGIES)
@@ -234,11 +237,7 @@ class VideoDownloader:
 
         return best_info, last_error_msg
 
-    def fetch_info(self, url, cookies_file=None, browser_cookies=None):
-        """
-        Извлекает информацию о видео/плейлисте по URL.
-        Автоматически определяет тип (одно видео или плейлист).
-        """
+    def fetch_info(self, url: str, cookies_file: Optional[str] = None, browser_cookies: Optional[str] = None) -> dict:
         info_dict, error_msg = self._try_extract_with_strategies(url, cookies_file, browser_cookies)
 
         if info_dict is None:
@@ -259,8 +258,7 @@ class VideoDownloader:
         # ═══ ОДНО ВИДЕО ═══
         return self._process_single_info(info_dict)
 
-    def _extract_subtitle_langs(self, info_dict):
-        """Извлекает доступные языки субтитров (ручные + авто)."""
+    def _extract_subtitle_langs(self, info_dict: dict) -> dict:
         manual_subs = info_dict.get('subtitles', {}) or {}
         auto_subs = info_dict.get('automatic_captions', {}) or {}
 
@@ -277,8 +275,7 @@ class VideoDownloader:
             'auto': sorted(list(auto_langs)),
         }
 
-    def _process_single_info(self, info_dict):
-        """Обрабатывает информацию одного видео."""
+    def _process_single_info(self, info_dict: dict) -> dict:
         title = info_dict.get('title', 'Без названия')
         duration = info_dict.get('duration', 0)
         thumbnail_url = info_dict.get('thumbnail')
@@ -303,8 +300,7 @@ class VideoDownloader:
             'subtitle_langs': subtitle_langs,
         }
 
-    def _process_playlist_info(self, info_dict):
-        """Обрабатывает информацию о плейлисте."""
+    def _process_playlist_info(self, info_dict: dict) -> dict:
         entries_raw = info_dict.get('entries', [])
 
         # Материализуем генератор entries (yt-dlp возвращает генератор)
@@ -382,24 +378,35 @@ class VideoDownloader:
             'subtitle_langs': subtitle_langs,
         }
 
-    def download(self, url, format_selection, output_path, cookies_file=None,
-                 browser_cookies=None, progress_callback=None,
-                 finished_callback=None, error_callback=None,
-                 playlist_item_callback=None, fetched_info=None, embed_metadata=False,
-                 download_subtitles=False, subtitle_langs=None, subtitle_format='srt',
-                 auto_subtitles=False, embed_subtitles=False, youtube_style=False,
-                 cancel_event=None, rate_limit=0, audio_format='MP3', sponsorblock=False,
-                 trim_start=None, trim_end=None):
-        """
-        Запускает скачивание выбранного формата.
-        playlist_item_callback(current, total, title) — вызывается при начале каждого видео в плейлисте.
-        cancel_event — threading.Event(), установка которого прерывает загрузку.
-        """
+    def download(
+        self,
+        url: str,
+        format_selection: str,
+        output_path: str,
+        cookies_file: Optional[str] = None,
+        browser_cookies: Optional[str] = None,
+        progress_callback: Optional[Callable] = None,
+        finished_callback: Optional[Callable] = None,
+        error_callback: Optional[Callable] = None,
+        playlist_item_callback: Optional[Callable] = None,
+        fetched_info: Optional[dict] = None,
+        embed_metadata: bool = False,
+        download_subtitles: bool = False,
+        subtitle_langs: Optional[list] = None,
+        subtitle_format: str = 'srt',
+        auto_subtitles: bool = False,
+        embed_subtitles: bool = False,
+        youtube_style: bool = False,
+        cancel_event=None,
+        rate_limit: int = 0,
+        audio_format: str = 'MP3',
+        sponsorblock: bool = False,
+        trim_start: Optional[str] = None,
+        trim_end: Optional[str] = None,
+    ) -> None:
         ydl_opts = self._base_opts(cookies_file, strategy_idx=self._working_strategy_idx)
-        
+
         if fetched_info and fetched_info.get('type') == 'playlist':
-            import re
-            import requests
             playlist_title = fetched_info.get('title', 'Playlist')
             playlist_name_safe = re.sub(r'[\\/*?:"<>|]', "_", playlist_title).strip()
             final_out_dir = os.path.join(output_path, playlist_name_safe)
@@ -418,28 +425,31 @@ class VideoDownloader:
                 thumb_url = fetched_info.get('thumbnail')
                 if thumb_url:
                     try:
-                        _MAX_COVER = 5 * 1024 * 1024  # 5 МБ — достаточно для обложки
-                        r = requests.get(thumb_url, timeout=10, stream=True)
-                        if r.status_code == 200:
-                            cl = r.headers.get('Content-Length')
-                            if not cl or int(cl) <= _MAX_COVER:
-                                chunks, total = [], 0
-                                for chunk in r.iter_content(8192):
-                                    total += len(chunk)
-                                    if total > _MAX_COVER:
-                                        break
-                                    chunks.append(chunk)
-                                else:
-                                    with open(os.path.join(final_out_dir, 'cover.jpg'), 'wb') as f:
-                                        f.write(b''.join(chunks))
+                        _MAX_COVER = 5 * 1024 * 1024
+                        with requests.get(thumb_url, timeout=10, stream=True) as r:
+                            if r.status_code == 200:
+                                cl = r.headers.get('Content-Length')
+                                if not cl or int(cl) <= _MAX_COVER:
+                                    chunks, total = [], 0
+                                    for chunk in r.iter_content(8192):
+                                        total += len(chunk)
+                                        if total > _MAX_COVER:
+                                            break
+                                        chunks.append(chunk)
+                                    else:
+                                        with open(os.path.join(final_out_dir, 'cover.jpg'), 'wb') as f:
+                                            f.write(b''.join(chunks))
                     except Exception:
                         pass
             except Exception as e:
-                print(f"Ошибка сохранения метаданных плейлиста: {e}")
+                logger.warning("Ошибка сохранения метаданных плейлиста: %s", e)
                 final_out_dir = output_path
                 
             ydl_opts['outtmpl'] = os.path.join(final_out_dir, '%(title)s.%(ext)s')
             ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в плейлисте
+        elif fetched_info and fetched_info.get('type') == 'batch':
+            ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
+            ydl_opts['ignoreerrors'] = True  # Пропускать ошибки отдельных видео в пакете
         else:
             ydl_opts['outtmpl'] = os.path.join(output_path, '%(title)s.%(ext)s')
             ydl_opts['ignoreerrors'] = False
@@ -451,7 +461,7 @@ class VideoDownloader:
             ydl_opts['cookiesfrombrowser'] = (browser_cookies,)
 
         # Паузы между запросами для обхода блокировок IP (особенно важно для плейлистов)
-        if fetched_info and fetched_info.get('type') == 'playlist':
+        if fetched_info and fetched_info.get('type') in ('playlist', 'batch'):
             ydl_opts['sleep_interval_requests'] = 2
             ydl_opts['sleep_interval_subtitles'] = 2
             ydl_opts['sleep_interval'] = 3
@@ -481,14 +491,15 @@ class VideoDownloader:
                     prefix = ""
                     if playlist_state['total'] > 0:
                         prefix = f"[{playlist_state['current']}/{playlist_state['total']}] "
-                    info_text = f"{prefix}⬇ {speed_mb:.1f} МБ/с  |  Осталось: {eta}с"
+                    eta_text = f" | Осталось: {eta}с" if eta else ""
+                    info_text = f"{prefix}{speed_mb:.1f} МБ/с{eta_text}"
                     progress_callback(percent, info_text)
                 elif d['status'] == 'finished':
                     if playlist_state['total'] > 0:
                         p = playlist_state['current'] / playlist_state['total']
-                        progress_callback(p, f"[{playlist_state['current']}/{playlist_state['total']}] ⏳ Обработка...")
+                        progress_callback(p, f"[{playlist_state['current']}/{playlist_state['total']}] Обработка...")
                     else:
-                        progress_callback(1.0, "⏳ Обработка...")
+                        progress_callback(1.0, "Обработка...")
             # A: cancel hook — вставляем в рамки progress hook, чтобы yt-dlp прервался при отмене
             if cancel_event is not None:
                 def cancel_hook(d):
@@ -573,7 +584,8 @@ class VideoDownloader:
                 def parse_tc(tc):
                     parts = str(tc).strip().split(':')
                     s = 0
-                    for p in parts: s = s * 60 + float(p)
+                    for p in parts:
+                        s = s * 60 + float(p)
                     return s
                 s_sec = parse_tc(trim_start)
                 e_sec = parse_tc(trim_end)
@@ -583,21 +595,21 @@ class VideoDownloader:
                     ydl_opts['download_ranges'] = download_range_func
                     ydl_opts['force_keyframes_at_cuts'] = True
             except Exception as e:
-                print(f"Ошибка парсинга таймкодов: {e}")
+                logger.warning("Ошибка парсинга таймкодов: %s", e)
 
         # ── Субтитры ──
         if download_subtitles:
             langs = subtitle_langs if subtitle_langs else ['ru', 'en']
-            langs = [l.strip() for l in langs if l.strip()]
+            langs = [lang.strip() for lang in langs if lang.strip()]
             if not langs:
                 langs = ['ru', 'en']
 
             expanded_langs = []
-            for l in langs:
-                expanded_langs.append(l)
-                if "-" not in l:
+            for lang in langs:
+                expanded_langs.append(lang)
+                if "-" not in lang:
                     # Позволяет yt-dlp скачивать автопереведенные субтитры (формат 'оригинал-перевод', например 'ru-en')
-                    expanded_langs.append(f".*-{l}")
+                    expanded_langs.append(f".*-{lang}")
 
             ydl_opts['writesubtitles'] = True
             ydl_opts['subtitleslangs'] = expanded_langs
@@ -644,7 +656,9 @@ class VideoDownloader:
                 else:
                     ydl.download([url])
             if finished_callback:
-                finished_callback(playlist_state.get('errors', 0))
+                err_logger = ydl_opts.get('logger')
+                err_msgs = err_logger.errors if isinstance(err_logger, _ErrorCountLogger) else []
+                finished_callback(playlist_state.get('errors', 0), err_msgs)
         except _CancelledException:
             # A: пользователь отменил — сигнализируем UI через сентинель
             if error_callback:

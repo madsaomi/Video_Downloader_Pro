@@ -1,23 +1,23 @@
 import json
 import os
+import shutil
 from datetime import datetime
+from typing import Any, Dict, List
+
 
 class HistoryManager:
-    def __init__(self):
-        # Определение пути для данных — используем APPDATA для надёжности
+    def __init__(self) -> None:
         app_data = os.path.join(
             os.environ.get('APPDATA', os.path.expanduser('~')),
-            'VideoDownloaderPro'
+            'VideoDownloaderPro',
         )
         os.makedirs(app_data, exist_ok=True)
 
-        self.history_file = os.path.join(app_data, 'history.json')
-        self.settings_file = os.path.join(app_data, 'settings.json')
+        self.history_file: str = os.path.join(app_data, 'history.json')
+        self.settings_file: str = os.path.join(app_data, 'settings.json')
 
-        # Миграция: если данные есть в старой папке data/ — переносим
         old_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
         if os.path.isdir(old_data):
-            import shutil
             for fname in ('history.json', 'settings.json'):
                 old_file = os.path.join(old_data, fname)
                 new_file = os.path.join(app_data, fname)
@@ -27,10 +27,12 @@ class HistoryManager:
                     except Exception:
                         pass
 
+        self.url_history: List[str] = []
+        self.downloads: List[dict] = []
+        self.settings: Dict[str, Any] = {}
         self.load_data()
 
-    def load_data(self):
-        # Загрузка истории
+    def load_data(self) -> None:
         if os.path.exists(self.history_file):
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
@@ -43,8 +45,7 @@ class HistoryManager:
         else:
             self.url_history = []
             self.downloads = []
-            
-        # Загрузка настроек
+
         if os.path.exists(self.settings_file):
             try:
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
@@ -54,69 +55,64 @@ class HistoryManager:
         else:
             self.settings = self._default_settings()
 
-    def _default_settings(self):
+    def _default_settings(self) -> Dict[str, Any]:
         return {
             "embed_metadata": True,
             "theme": "Dark",
             "preferred_quality": "— (не задано)",
             "rate_limit": 0,
-            "notifications_enabled": True
+            "notifications_enabled": True,
         }
 
-    def save_history(self):
+    def save_history(self) -> None:
         with open(self.history_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'url_history': self.url_history,
-                'downloads': self.downloads
+                'downloads': self.downloads,
             }, f, ensure_ascii=False, indent=4)
 
-    def save_settings(self):
+    def save_settings(self) -> None:
         with open(self.settings_file, 'w', encoding='utf-8') as f:
             json.dump(self.settings, f, ensure_ascii=False, indent=4)
-            
-    # --- Работа с URL ---
-    def add_url(self, url):
+
+    def add_url(self, url: str) -> None:
         url = url.strip()
-        if not url: return
-        # Избегаем дубликатов, сдвигая в начало
+        if not url:
+            return
         if url in self.url_history:
             self.url_history.remove(url)
         self.url_history.insert(0, url)
-        # Ограничиваем историю 50 ссылками
         self.url_history = self.url_history[:50]
         self.save_history()
 
-    def get_urls(self):
+    def get_urls(self) -> List[str]:
         return self.url_history
 
-    # --- Работа с загрузками ---
-    def add_download(self, title, url, file_path, format_str):
+    def add_download(self, title: str, url: str, file_path: str, format_str: str) -> None:
         download_record = {
             "title": title,
             "url": url,
             "path": file_path,
             "format": format_str,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         self.downloads.insert(0, download_record)
-        # Ограничиваем историю 100 файлами
         self.downloads = self.downloads[:100]
         self.save_history()
 
-    def get_downloads(self):
+    def get_downloads(self) -> List[dict]:
         return self.downloads
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         self.downloads = []
         self.url_history = []
         self.save_history()
 
-    # --- Работа с настройками ---
-    def get_setting(self, key, default=None):
+    def get_setting(self, key: str, default: Any = None) -> Any:
         if default is not None:
             return self.settings.get(key, default)
         return self.settings.get(key, self._default_settings().get(key))
 
-    def set_setting(self, key, value):
+    def set_setting(self, key: str, value: Any) -> None:
         self.settings[key] = value
         self.save_settings()

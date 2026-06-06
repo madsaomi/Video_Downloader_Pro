@@ -22,6 +22,7 @@ venv/
 # User Data
 cookies.txt
 data/
+history.json
 
 # IDEs
 .vscode/
@@ -37,6 +38,8 @@ setup_ffmpeg.ps1
 test_cb.py
 ffmpeg_temp.zip
 ffmpeg.zip
+tests/
+.pytest_cache/
 
 # PyInstaller
 dist/
